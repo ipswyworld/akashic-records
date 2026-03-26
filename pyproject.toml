@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "akasha-cli"
+version = "0.1.0"
+description = "Sovereign Neural Core CLI for the Akasha Universal Library"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "click",
+    "requests",
+    "rich",
+]
+
+[project.scripts]
+akasha = "backend.scripts.akasha_cli:cli"

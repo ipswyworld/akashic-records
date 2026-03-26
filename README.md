@@ -62,8 +62,8 @@ An executive function that allows Akasha to interact with the real world:
 ### Installation
 1.  **Clone the Repository:**
     ```bash
-    git clone https://github.com/your-repo/akasha.git
-    cd akasha
+    git clone https://github.com/ipswyworld/akashic-records.git
+    cd akashic-records
     ```
 
 2.  **Setup Backend:**
@@ -75,12 +75,29 @@ An executive function that allows Akasha to interact with the real world:
     python main.py
     ```
 
-3.  **Setup Frontend:**
+3.  **Setup Akasha CLI (The Archivist's Interface):**
+    ```bash
+    # From the project root
+    pip install -e .
+    ```
+
+4.  **Setup Frontend:**
     ```bash
     cd frontend-react
     npm install
     npm run dev
     ```
+
+---
+
+## 💻 CLI Usage
+The `akasha` CLI allows you to interact with the Neural Core directly from your terminal.
+
+*   **Ask a question:** `akasha ask "What are my core research themes?"`
+*   **Ingest a file:** `akasha ingest ./my_notes.txt`
+*   **Visualize your Ego:** `akasha ego`
+*   **Check system pulse:** `akasha pulse`
+*   **Rename your Core:** `akasha rename "Jarvis"`
 
 ---
 
