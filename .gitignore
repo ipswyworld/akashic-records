@@ -1,0 +1,13 @@
+__pycache__/
+*.db
+*.key
+node_modules/
+chroma_db/
+.env
+.DS_Store
+*.log
+venv/
+.venv/
+dist/
+build/
+.pytest_cache/

@@ -1,0 +1,45 @@
+# Core API and Database
+fastapi
+uvicorn
+sqlalchemy
+pydantic>=2.7.0
+pydantic-settings
+python-dotenv
+protobuf==3.20.3
+requests
+python-multipart
+
+# Optimized AI Stack (CPU-Only & Local LLM focus)
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+transformers
+sentence-transformers
+chromadb
+onnxruntime
+spacy==3.7.5
+
+# LLM Orchestration
+langchain
+langchain-core
+
+# Graph & Distributed
+boto3
+cryptography
+
+# Ingestion & Tools
+beautifulsoup4
+feedparser
+wikipedia
+arxiv
+duckduckgo_search
+apscheduler
+PyPDF2
+pandas
+python-docx
+openpyxl
+watchdog
+
+# Lightweight Data
+numpy
+pyttsx3
+youtube-transcript-api

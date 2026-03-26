@@ -1,0 +1,98 @@
+# Akasha: The Sovereign Neural Library & Digital Ego
+
+Akasha is a next-generation, local-first "Universal Library" designed to provide users with absolute digital sovereignty. It is not just a database or a note-taking app; it is an agentic ecosystem that functions as a digital extension of your own mind—an "External Neocortex" that protects, synthesizes, and evolves with your memories.
+
+## 🌌 The Vision: Digital Sovereignty
+In an era of centralized AI and data harvesting, Akasha returns power to the individual. Every thought, file, and interaction is stored locally, encrypted, and managed by a **Council of Librarians**—a multi-agent system that works exclusively for you.
+
+---
+
+## 🧠 Core Architecture: The Agentic Triad
+
+Akasha operates through three primary layers of intelligence:
+
+### 1. The Council of Librarians (The Brain)
+A specialized ensemble of 10+ local agents that decompose every piece of information:
+*   **Head Archivist:** Orchestrates the MoE (Mixture of Experts) routing.
+*   **The Oracle:** Handles Graph-RAG synthesis and provides "Divine" insights.
+*   **The Scribe:** Manages recursive summarization and dynamic schema extraction.
+*   **The Scholar:** Performs deep data analysis and autonomous tool generation.
+*   **The Sentinel:** Fact-checks, detects cognitive distortions (CBT), and monitors system health.
+*   **The Weaver:** Extracts knowledge graph triplets and finds deep analogies.
+*   **Adversarial Thinker:** Runs "Thought-GANs" to stress-test and refine insights.
+
+### 2. Chronos Engine (The Pulse)
+A temporal reasoning engine that manages the "Life Cycle" of your data:
+*   **Nocturnal Consolidation:** A "Dream Phase" where the system finds hidden connections while you sleep.
+*   **Behavioral Pattern Mining:** Analyzes your activity stream to update your **Digital Ego**.
+*   **Proactive Sentinels:** Monitors for deadlines, burnout, and knowledge gaps.
+
+### 3. Action Engine (The Hands)
+An executive function that allows Akasha to interact with the real world:
+*   **Autonomous Butler:** Decomposes high-level goals into tool calls (File I/O, Shell, IoT).
+*   **Skill Store:** Dynamic plugin architecture for expanding capabilities.
+
+---
+
+## ✨ Unique Features
+
+*   **Sovereign Digital Ego:** A dynamic psychological profile (OCEAN traits) learned over time, used to personalize AI interactions without cloud tracking.
+*   **Tree of Thoughts (ToT) Reasoning:** Parallel reasoning paths that are critiqued and synthesized for complex problem-solving.
+*   **Zero-Effort Identity:** Automatically recognizes your name and adjusts its persona (Archivist, Scholar, Rebel, etc.) to match your mood.
+*   **Multimodal Ingestion:** Seamlessly feeds on text, audio, images, and web clips.
+
+---
+
+## 🛠️ Technical Stack
+
+*   **Backend:** FastAPI (Python), SQLAlchemy (SQLite), Alembic.
+*   **Intelligence:** LangChain, Ollama (Local LLMs), Transformers, Sentence-Transformers.
+*   **Storage:** ChromaDB (Vector), Neo4j/NetworkX (Graph).
+*   **Frontend:** React (Vite), GSAP Animations, TanStack Query, Lucide Icons, Tailwind CSS.
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+*   Python 3.10+
+*   Node.js 18+
+*   [Ollama](https://ollama.com/) (running locally)
+
+### Installation
+1.  **Clone the Repository:**
+    ```bash
+    git clone https://github.com/your-repo/akasha.git
+    cd akasha
+    ```
+
+2.  **Setup Backend:**
+    ```bash
+    cd backend
+    pip install -r requirements.txt
+    cp .env.example .env
+    alembic upgrade head
+    python main.py
+    ```
+
+3.  **Setup Frontend:**
+    ```bash
+    cd frontend-react
+    npm install
+    npm run dev
+    ```
+
+---
+
+## 🛡️ Security & Privacy
+*   **Local-First:** All heavy lifting happens on your machine.
+*   **Encrypted Storage:** Artifacts are encrypted before being stored in the database.
+*   **Sovereign Mode:** A high-security tier that redacts PII and restricts external API calls.
+
+---
+
+## 📜 License
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+*Akasha is not just a tool; it is a partnership. Welcome to your universal library.*
