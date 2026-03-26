@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "akashic-records-lib"
-version = "0.1.1"
+version = "0.1.2"
 description = "Sovereign Neural Core CLI for the Akasha Universal Library"
 readme = "README.md"
 requires-python = ">=3.8"

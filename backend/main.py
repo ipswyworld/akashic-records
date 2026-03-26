@@ -261,11 +261,12 @@ async def lifespan(app: FastAPI):
     await pod_manager.get_pod("system_user")
 
     # Initialize Metabolism
-    db_living = AkashaLivingDB(user_id="system_user")
+    db_living = AkashaLivingDB()
     metabolism = AkashaMetabolism(db_living, ai_engine, blockchain, manager, user_id="system_user")
     metabolism_task = asyncio.create_task(metabolism.start_metabolic_cycle())
 
-    # Warm up AI Engine with Digital Ego    db = SessionLocal()
+    # Warm up AI Engine with Digital Ego
+    db = SessionLocal()
     try:
         profile = db.query(UserPsychology).filter(UserPsychology.user_id == "system_user").first()
         if profile:

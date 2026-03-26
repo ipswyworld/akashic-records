@@ -28,7 +28,7 @@ def ask(query, stream):
         payload = {"query": query}
         try:
             with requests.post(url, json=payload, stream=True) as r:
-                console.print(f"[bold amber]Archivist Thinking...[/bold amber]")
+                console.print(f"[bold yellow]Archivist Thinking...[/bold yellow]")
                 for chunk in r.iter_content(chunk_size=None, decode_unicode=True):
                     if chunk:
                         console.print(chunk, end="", style="italic cyan")
@@ -44,7 +44,7 @@ def ask(query, stream):
                 r = requests.post(url, json=payload)
                 data = r.json()
                 answer = data.get("answer", {}).get("answer", "No response.")
-                console.print(Panel(answer, title="[bold amber]Akasha Synthesis[/bold amber]", border_style="amber"))
+                console.print(Panel(answer, title="[bold yellow]Akasha Synthesis[/bold yellow]", border_style="yellow"))
             except Exception as e:
                 console.print(f"[bold red]Error:[/bold red] {e}")
 
