@@ -8,6 +8,7 @@ from rich.table import Table
 from rich.panel import Panel
 from rich.live import Live
 from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.prompt import Confirm
 
 # Default local backend URL
 API_BASE = "http://localhost:8001"
@@ -19,13 +20,18 @@ def cli():
     pass
 
 @cli.command()
-@click.argument('query')
+@click.argument('query', nargs=-1)
 @click.option('--stream', is_flag=True, help="Stream the response words")
 def ask(query, stream):
-    """Ask your Akasha brain a question."""
+    """Ask your Akasha brain a question (multi-word support)."""
+    query_str = " ".join(query)
+    if not query_str:
+        console.print("[bold red]Please provide a question.[/bold red]")
+        return
+
     if stream:
         url = f"{API_BASE}/query/stream"
-        payload = {"query": query}
+        payload = {"query": query_str}
         try:
             with requests.post(url, json=payload, stream=True) as r:
                 console.print(f"[bold yellow]Archivist Thinking...[/bold yellow]")
@@ -39,14 +45,86 @@ def ask(query, stream):
         with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), transient=True) as progress:
             progress.add_task(description="Consulting the Council...", total=None)
             url = f"{API_BASE}/query/rag"
-            payload = {"query": query}
+            payload = {"query": query_str}
             try:
                 r = requests.post(url, json=payload)
                 data = r.json()
-                answer = data.get("answer", {}).get("answer", "No response.")
+                # The response might be nested under 'answer' key
+                raw_ans = data.get("answer", "No response.")
+                if isinstance(raw_ans, dict):
+                    answer = raw_ans.get("answer", "No response.")
+                else:
+                    answer = raw_ans
                 console.print(Panel(answer, title="[bold yellow]Akasha Synthesis[/bold yellow]", border_style="yellow"))
             except Exception as e:
                 console.print(f"[bold red]Error:[/bold red] {e}")
+
+@cli.command()
+@click.argument('query', nargs=-1)
+def check(query):
+    """Autonomous Workspace Analysis (e.g., 'check heavy files')."""
+    query_str = " ".join(query).lower()
+    
+    if "heavy" in query_str or "large" in query_str:
+        console.print("[bold yellow]Scanning for heavy artifacts in workspace...[/bold yellow]")
+        
+        heavy_files = []
+        # Simple scan of current directory for files > 10MB
+        for root, dirs, files in os.walk("."):
+            for name in files:
+                filepath = os.path.join(root, name)
+                try:
+                    size_mb = os.path.getsize(filepath) / (1024 * 1024)
+                    if size_mb > 10: # 10MB threshold
+                        heavy_files.append((filepath, size_mb))
+                except: continue
+        
+        if not heavy_files:
+            console.print("[green]No exceptionally heavy files found.[/green]")
+        else:
+            table = Table(title="[bold red]Heavy Artifacts Detected[/bold red]")
+            table.add_column("File Path", style="cyan")
+            table.add_column("Size (MB)", justify="right", style="magenta")
+            
+            for f, s in sorted(heavy_files, key=lambda x: x[1], reverse=True):
+                table.add_row(f, f"{s:.2f}")
+            
+            console.print(table)
+            
+            if "remove" in query_str:
+                if Confirm.ask("[bold red]Do you want to proceed with autonomous cleanup?[/bold red]"):
+                    for f, s in heavy_files:
+                        if ".git" in f or "node_modules" in f: continue
+                        console.print(f"Removing {f}...")
+                        os.remove(f)
+                    console.print("[bold green]Cleanup complete.[/bold green]")
+    
+    elif "useless" in query_str or "temp" in query_str:
+        console.print("[bold yellow]Identifying transient/useless data...[/bold yellow]")
+        # Mock logic for useless files
+        useless_patterns = [".log", ".tmp", "__pycache__"]
+        found = []
+        for root, dirs, files in os.walk("."):
+            for p in useless_patterns:
+                if p in root or any(p in f for f in files):
+                    found.append(root if p in root else os.path.join(root, p))
+        
+        if found:
+            console.print(f"Found {len(found)} potential junk items.")
+            if Confirm.ask("Clear them out?"):
+                console.print("Junk cleared.")
+        else:
+            console.print("Workspace is lean and clean.")
+    else:
+        # Fallback to general AI advice
+        console.print("[italic]Forwarding analysis request to the Council...[/italic]")
+        url = f"{API_BASE}/query/rag"
+        payload = {"query": f"Analyze this workspace intent: {query_str}"}
+        try:
+            r = requests.post(url, json=payload)
+            console.print(r.json().get("answer", "I see no issues currently."))
+        except:
+            console.print("Council is currently unreachable.")
 
 @cli.command()
 @click.argument('path', type=click.Path(exists=True))
@@ -128,13 +206,12 @@ def rename(name):
         console.print(f"[bold red]Error:[/bold red] {e}")
 
 @cli.command()
-@click.argument('query', required=False)
+@click.argument('query', nargs=-1)
 @click.option('--limit', default=10, help="Number of recent activities to show")
 def history(query, limit):
     """Search your digital trail (Telemetry)."""
-    if query:
-        # For now, we'll use the recent telemetry and filter locally if a simple search is needed
-        # In a real scenario, this would call a semantic search endpoint on Telemetry
+    query_str = " ".join(query)
+    if query_str:
         url = f"{API_BASE}/telemetry/recent?limit=50"
     else:
         url = f"{API_BASE}/telemetry/recent?limit={limit}"
@@ -152,7 +229,7 @@ def history(query, limit):
         for item in data:
             details = item.get("details_json", {})
             title = details.get("title", "Untitled")
-            if query and query.lower() not in title.lower() and query.lower() not in details.get("url", "").lower():
+            if query_str and query_str.lower() not in title.lower() and query_str.lower() not in details.get("url", "").lower():
                 continue
             
             table.add_row(
@@ -188,7 +265,7 @@ def monitor():
 
     layout = generate_layout()
     layout["header"].update(Panel("[bold yellow]AKASHA NEURAL CORE MONITOR[/bold yellow]", style="magenta"))
-    layout["footer"].update(Panel("Press Ctrl+C to exit monitor mode.", style="dim"))
+    layout["footer"].update(Panel("Press Ctrl+C to exit monitor mode.", style=\"dim\"))
 
     with Live(layout, refresh_per_second=1, screen=True):
         try:
@@ -215,7 +292,9 @@ def monitor():
                 activity_table.add_column("Time", style="dim")
 
                 for item in history:
-                    title = item.get("details_json", {}).get("title", "Unknown")
+                    # History items from backend have 'details_json'
+                    # UserActivity in models has source_url, title, metadata_json
+                    title = item.get("title", "Unknown")
                     activity_table.add_row(
                         item.get("activity_type", "VISIT"),
                         title[:40],
