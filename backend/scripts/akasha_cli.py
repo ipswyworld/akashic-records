@@ -127,5 +127,105 @@ def rename(name):
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {e}")
 
+@cli.command()
+@click.argument('query', required=False)
+@click.option('--limit', default=10, help="Number of recent activities to show")
+def history(query, limit):
+    """Search your digital trail (Telemetry)."""
+    if query:
+        # For now, we'll use the recent telemetry and filter locally if a simple search is needed
+        # In a real scenario, this would call a semantic search endpoint on Telemetry
+        url = f"{API_BASE}/telemetry/recent?limit=50"
+    else:
+        url = f"{API_BASE}/telemetry/recent?limit={limit}"
+
+    try:
+        r = requests.get(url)
+        data = r.json()
+        
+        table = Table(title="[bold cyan]Digital Trail: Recent Activity[/bold cyan]")
+        table.add_column("Type", style="magenta")
+        table.add_column("Title", style="white")
+        table.add_column("URL", style="blue")
+        table.add_column("Timestamp", style="dim")
+
+        for item in data:
+            details = item.get("details_json", {})
+            title = details.get("title", "Untitled")
+            if query and query.lower() not in title.lower() and query.lower() not in details.get("url", "").lower():
+                continue
+            
+            table.add_row(
+                item.get("activity_type", "VISIT"),
+                (title[:47] + '..') if len(title) > 50 else title,
+                details.get("url", "N/A")[:30],
+                item.get("timestamp")[:19]
+            )
+        
+        console.print(table)
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {e}")
+
+@cli.command()
+def monitor():
+    """Live TUI-like view of system activity and ingestions."""
+    import time
+    from rich.layout import Layout
+    from rich.live import Live
+    
+    def generate_layout() -> Layout:
+        layout = Layout()
+        layout.split_column(
+            Layout(name="header", size=3),
+            Layout(name="main"),
+            Layout(name="footer", size=3)
+        )
+        layout["main"].split_row(
+            Layout(name="activity"),
+            Layout(name="stats", size=40)
+        )
+        return layout
+
+    layout = generate_layout()
+    layout["header"].update(Panel("[bold yellow]AKASHA NEURAL CORE MONITOR[/bold yellow]", style="magenta"))
+    layout["footer"].update(Panel("Press Ctrl+C to exit monitor mode.", style="dim"))
+
+    with Live(layout, refresh_per_second=1, screen=True):
+        try:
+            while True:
+                # Fetch data
+                r_stats = requests.get(f"{API_BASE}/analytics")
+                stats = r_stats.json()
+                
+                r_hist = requests.get(f"{API_BASE}/telemetry/recent?limit=15")
+                history = r_hist.json()
+
+                # Update Stats
+                stats_table = Table(title="Neural Stats", show_header=False, box=None)
+                stats_table.add_row("Core Name", f"[cyan]{stats.get('neural_name')}[/cyan]")
+                stats_table.add_row("Status", "[green]ONLINE[/green]")
+                stats_table.add_row("Artifacts", str(stats.get("total_count")))
+                stats_table.add_row("Last Pulse", time.strftime("%H:%M:%S"))
+                layout["stats"].update(Panel(stats_table, title="System info"))
+
+                # Update Activity
+                activity_table = Table(title="Live Telemetry Stream", expand=True)
+                activity_table.add_column("Activity", style="magenta")
+                activity_table.add_column("Resource", style="white")
+                activity_table.add_column("Time", style="dim")
+
+                for item in history:
+                    title = item.get("details_json", {}).get("title", "Unknown")
+                    activity_table.add_row(
+                        item.get("activity_type", "VISIT"),
+                        title[:40],
+                        item.get("timestamp")[11:19]
+                    )
+                layout["activity"].update(Panel(activity_table, title="Neural Activity"))
+                
+                time.sleep(1)
+        except KeyboardInterrupt:
+            pass
+
 if __name__ == "__main__":
     cli()

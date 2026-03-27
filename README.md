@@ -88,6 +88,12 @@ An executive function that allows Akasha to interact with the real world:
     npm run dev
     ```
 
+5. **Setup Browser Extension:**
+    *   Open Chrome/Edge.
+    *   Go to `chrome://extensions/`.
+    *   Enable **Developer mode**.
+    *   Click **Load unpacked** and select the `browser-extension` folder.
+
 ---
 
 ## 💻 CLI Usage

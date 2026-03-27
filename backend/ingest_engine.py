@@ -134,6 +134,25 @@ class IngestEngine:
         self.ingested_hashes.add(resource_hash)
         return True
 
+    def fetch_latest_news(self) -> List[Dict]:
+        """Polls default RSS feeds and extracts the latest news."""
+        all_news = []
+        for feed_url in self.default_rss_feeds:
+            try:
+                feed = feedparser.parse(feed_url)
+                for entry in feed.entries[:5]: # Limit to 5 per feed to avoid overwhelm
+                    if entry.link not in self.seen_urls:
+                        # Full scrape of the article content
+                        scraped = self.scrape_web_memory(entry.link)
+                        if "content" in scraped:
+                            scraped["category"] = "news_article"
+                            scraped["link"] = entry.link
+                            all_news.append(scraped)
+                            self.seen_urls.add(entry.link)
+            except Exception as e:
+                print(f"Failed to poll feed {feed_url}: {e}")
+        return all_news
+
     def fetch_wikipedia_article(self, topic: str) -> Dict:
         try:
             page = wikipedia.page(topic, auto_suggest=False)

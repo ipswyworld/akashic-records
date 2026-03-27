@@ -12,9 +12,10 @@ class TelemetryIngestEngine:
         new_activity = UserActivity(
             user_id=user_id,
             activity_type=activity_data.get("type", "BROWSER_VIEW"),
-            details_json={
-                "url": activity_data.get("url"),
-                "title": activity_data.get("title"),
+            title=activity_data.get("title", "Untitled"),
+            content=activity_data.get("content"),
+            source_url=activity_data.get("url"),
+            metadata_json={
                 "app": activity_data.get("app"),
                 "duration": activity_data.get("duration", 0),
                 "timestamp": str(datetime.datetime.utcnow())
@@ -23,6 +24,7 @@ class TelemetryIngestEngine:
         )
         db.add(new_activity)
         db.commit()
+        db.refresh(new_activity)
         return new_activity
 
     @staticmethod

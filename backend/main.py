@@ -193,6 +193,8 @@ from srs_engine import SRSEngine
 from ouro_subchain import OuroborosSubchain
 from akasha_db.metabolism import AkashaMetabolism
 from akasha_db.core import AkashaLivingDB
+from telemetry_ingest import TelemetryIngestEngine
+from privacy_utils import redactor
 
 def get_initial_ai_engine():
     db = SessionLocal()
@@ -207,6 +209,7 @@ def get_initial_ai_engine():
 # Instantiate Engines
 ai_engine = get_initial_ai_engine()
 intel_engine = IntelEngine()
+telemetry_engine = TelemetryIngestEngine()
 p2p_node = P2PNode(intel_engine=intel_engine)
 blockchain = BlockchainAdapter()
 graph_engine = GraphEngine()
@@ -456,17 +459,20 @@ async def query_rag(request: QueryRequest):
     if identity_update:
         return {"query": request.query, "answer": identity_update}
 
-    entities = [e['word'] for e in ai_engine.ner_pipeline(request.query)]
-    vector_results = ai_engine.search_vectors(request.query, n_results=5, user_id=request.user_id)
+    # Sovereign Privacy Layer: Scrub query before RAG/Research
+    scrubbed_query = redactor.scrub(request.query)
+
+    entities = [e['word'] for e in ai_engine.ner_pipeline(scrubbed_query)]
+    vector_results = ai_engine.search_vectors(scrubbed_query, n_results=5, user_id=request.user_id)
     vector_context = vector_results.get("documents", [[]])[0]
     graph_context = graph_engine.search_graph_context(entities, user_id=request.user_id)
     is_poor = not vector_context or all(len(c) < 200 for c in vector_context)
     if is_poor:
         loop = asyncio.get_event_loop()
-        answer = await loop.run_in_executor(None, ai_engine.council.scout.deep_research, request.query, ingest)
+        answer = await loop.run_in_executor(None, ai_engine.council.scout.deep_research, scrubbed_query, ingest)
     else:
-        answer = ai_engine.synthesize_graph_rag(request.query, vector_context, graph_context)
-    return {"query": request.query, "answer": answer, "deep_research_used": is_poor}
+        answer = ai_engine.synthesize_graph_rag(scrubbed_query, vector_context, graph_context)
+    return {"query": request.query, "answer": answer, "deep_research_used": is_poor, "privacy_redaction": "active"}
 
 @app.post("/query/debate")
 async def query_debate(request: QueryRequest):
@@ -569,7 +575,11 @@ async def ingest_dataset(background_tasks: BackgroundTasks, file: List[UploadFil
 async def ingest_web_clipper(request: IngestUrlRequest, db: Session = Depends(get_db)):
     scraped = ingest.scrape_web_memory(request.url)
     if "error" in scraped: raise HTTPException(status_code=400, detail=scraped["error"])
-    art = await ingest_library_artifact(scraped["title"], scraped["content"], "web_clip", {"url": request.url}, db, request.user_id)
+    
+    # Sovereign Privacy Layer: Scrub scraped content before ingestion
+    scrubbed_content = redactor.scrub(scraped["content"])
+    
+    art = await ingest_library_artifact(scraped["title"], scrubbed_content, "web_clip", {"url": request.url}, db, request.user_id)
     return art
 
 @app.post("/ingest/audio")
@@ -636,6 +646,15 @@ async def get_user_psychology(user_id: str = "system_user", db: Session = Depend
     profile = db.query(UserPsychology).filter(UserPsychology.user_id == user_id).first()
     if not profile: return {"status": "NO_PROFILE"}
     return {"known_name": profile.known_name, "ocean_traits": {"openness": profile.openness, "conscientiousness": profile.conscientiousness, "extraversion": profile.extraversion, "agreeableness": profile.agreeableness, "neuroticism": profile.neuroticism}, "cognitive_distortions": profile.identified_distortions, "habit_patterns": profile.habit_patterns, "current_mood": profile.current_mood}
+
+@app.post("/telemetry")
+async def log_telemetry(request: TelemetryRequest, db: Session = Depends(get_db)):
+    activity = telemetry_engine.log_activity(db, request.user_id, request.dict())
+    return activity
+
+@app.get("/telemetry/recent")
+async def get_recent_telemetry(user_id: str = "system_user", db: Session = Depends(get_db)):
+    return telemetry_engine.get_recent_activity(db, user_id)
 
 @app.get("/artifacts")
 async def list_artifacts(user_id: str = "system_user", db: Session = Depends(get_db)):

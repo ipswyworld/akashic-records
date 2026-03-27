@@ -54,4 +54,33 @@ class SovereignVault:
             # If decryption fails, return as is (maybe it wasn't encrypted or key changed)
             return encrypted_data
 
+import re
+
+class Redactor:
+    """Sovereign Privacy Layer: Scrubs PII from data before it reaches external models."""
+    
+    EMAIL_PATTERN = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+    PHONE_PATTERN = r'\+?\d[\d -]{8,12}\d'
+    # Simplified Name pattern (First Last) - prone to false positives, but useful for basic redaction
+    # Real systems use NLP models like SpaCy for this.
+    NAME_PATTERN = r'\b[A-Z][a-z]+ [A-Z][a-z]+\b'
+
+    @classmethod
+    def scrub(cls, text: str, mode: str = "redact") -> str:
+        if not text: return text
+        
+        # Redact Emails
+        text = re.sub(cls.EMAIL_PATTERN, "[EMAIL_REDACTED]", text)
+        
+        # Redact Phone Numbers
+        text = re.sub(cls.PHONE_PATTERN, "[PHONE_REDACTED]", text)
+        
+        # Redact Names (Optional, can be aggressive)
+        if mode == "aggressive":
+            text = re.sub(cls.NAME_PATTERN, "[NAME_REDACTED]", text)
+            
+        return text
+
 vault = SovereignVault()
+redactor = Redactor()
+
