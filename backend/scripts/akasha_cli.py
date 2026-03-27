@@ -265,7 +265,7 @@ def monitor():
 
     layout = generate_layout()
     layout["header"].update(Panel("[bold yellow]AKASHA NEURAL CORE MONITOR[/bold yellow]", style="magenta"))
-    layout["footer"].update(Panel("Press Ctrl+C to exit monitor mode.", style=\"dim\"))
+    layout["footer"].update(Panel("Press Ctrl+C to exit monitor mode.", style="dim"))
 
     with Live(layout, refresh_per_second=1, screen=True):
         try:
