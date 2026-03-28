@@ -1,6 +1,7 @@
-from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form, WebSocket, WebSocketDisconnect, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form, WebSocket, WebSocketDisconnect, BackgroundTasks, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
@@ -19,12 +20,55 @@ from bootstrap import bootstrap_environment
 
 # Ensure environment is ready
 bootstrap_environment()
-
 load_dotenv()
-try:
-    import keyring
-except ImportError:
-    keyring = None
+
+# --- Sovereign Database & Models ---
+from database import engine, Base, get_db, SessionLocal
+from models import User, LibraryArtifact, UserTask, SRSCard, UserActivity, UserSettings, UserPsychology, ObjectSchema
+
+# Ensure database tables are created
+Base.metadata.create_all(bind=engine)
+
+import auth_utils
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
+
+class UserCreate(BaseModel):
+    username: str
+    email: str
+    password: str
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    # --- DORMANT MODE: Deactivated ---
+    DORMANT_MODE = False 
+    
+    if DORMANT_MODE:
+        user = db.query(User).filter(User.username == "dev_user").first()
+        if not user:
+            # Create a default dev user if not exists
+            user = User(username="dev_user", email="dev@akasha.local", hashed_password="dormant_password")
+            db.add(user); db.commit(); db.refresh(user)
+        return user
+
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    payload = auth_utils.decode_access_token(token)
+    if payload is None:
+        raise credentials_exception
+    username: str = payload.get("sub")
+    if username is None:
+        raise credentials_exception
+    user = db.query(User).filter(User.username == username).first()
+    if user is None:
+        raise credentials_exception
+    return user
 
 # --- Lightweight Request Models ---
 class QueryRequest(BaseModel):
@@ -63,6 +107,10 @@ class FeedbackRequest(BaseModel):
 
 class ActionGoalRequest(BaseModel):
     goal: str
+    user_id: str = "system_user"
+
+class P2PStealthRequest(BaseModel):
+    enabled: bool
     user_id: str = "system_user"
 
 class TelemetryRequest(BaseModel):
@@ -206,6 +254,8 @@ def get_initial_ai_engine():
     finally:
         db.close()
 
+from context_fabric import ContextFabric
+
 # Instantiate Engines
 ai_engine = get_initial_ai_engine()
 intel_engine = IntelEngine()
@@ -213,6 +263,7 @@ telemetry_engine = TelemetryIngestEngine()
 p2p_node = P2PNode(intel_engine=intel_engine)
 blockchain = BlockchainAdapter()
 graph_engine = GraphEngine()
+fabric = ContextFabric(ai_engine, graph_engine)
 multimodal = MultimodalEngine()
 executive = ActionEngine(ai_engine)
 pod_manager = PodManager(ai_engine, graph_engine, blockchain)
@@ -298,13 +349,34 @@ async def lifespan(app: FastAPI):
                 await asyncio.sleep(600)
                 now = datetime.datetime.utcnow()
                 await chronos.trigger_temporal_actions("system_user")
-                await chronos.run_nocturnal_consolidation("system_user")
+                
+                # Autonomous Dream Phase (Nocturnal Consolidation)
+                if now.hour == 3 and last_reflection_day != now.day: # Run at 3 AM
+                    await chronos.run_nocturnal_consolidation("system_user")
                 
                 # Proactive Behavioral Reflection (Every 12 hours)
                 if now - last_behavioral_mining > datetime.timedelta(hours=12):
                     print("Sentinel: Initiating Deep Behavioral Reflection...")
                     await chronos.run_behavioral_pattern_mining("system_user")
                     last_behavioral_mining = now
+
+                # Autonomous Evolution Cycle (Every 24 hours)
+                if now - last_observer_run > datetime.timedelta(hours=24):
+                    db = SessionLocal()
+                    try:
+                        await ai_engine.run_autonomous_evolution("system_user", db)
+                    finally: db.close()
+
+                # Seer: Morning Prediction (Every 24 hours at 8 AM)
+                if now.hour == 8 and last_reflection_day != now.day:
+                    db = SessionLocal()
+                    try:
+                        prediction = await ai_engine.predict_user_needs("system_user", db)
+                        await manager.broadcast(json.dumps({
+                            "type": "PROACTIVE_SUGGESTION",
+                            "payload": prediction
+                        }))
+                    finally: db.close()
 
                 if now.hour == 22 and last_reflection_day != now.day:
                     db = SessionLocal()
@@ -404,6 +476,87 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/analytics/evolution")
+async def get_evolution_analytics(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Provides data for the Visual Evolution Timeline."""
+    from models import AgentPerformance, NeuralSkill
+    
+    # 1. Fetch Performance Trends
+    performances = db.query(AgentPerformance).filter(AgentPerformance.user_id == current_user.id).order_by(AgentPerformance.timestamp.asc()).all()
+    
+    # 2. Fetch Recently Forged Skills
+    skills = db.query(NeuralSkill).filter(NeuralSkill.user_id == current_user.id).order_by(NeuralSkill.created_at.desc()).limit(5).all()
+    
+    return {
+        "performance_history": [
+            {
+                "agent": p.agent_name, 
+                "fitness": p.fitness_score, 
+                "timestamp": p.timestamp.isoformat(),
+                "category": p.task_category
+            } for p in performances
+        ],
+        "forged_skills": [
+            {
+                "name": s.name, 
+                "desc": s.description, 
+                "count": s.success_count,
+                "created": s.created_at.isoformat()
+            } for s in skills
+        ],
+        "evolution_status": "ACTIVE" if len(performances) > 0 else "INITIALIZING"
+    }
+
+class MutationRequest(BaseModel):
+    file_path: str
+    instruction: str
+
+@app.post("/forge/mutate")
+async def manual_mutation(request: MutationRequest, current_user: User = Depends(get_current_user)):
+    """Triggers a Darwinian Mutation loop on a specific file."""
+    try:
+        best_code = ai_engine.council.self_architect.darwinian_mutation(
+            request.file_path, 
+            request.instruction, 
+            ai_engine.council.sentinel
+        )
+        
+        if best_code:
+            # For manual safety, we return the code for preview first or apply it
+            # Let's apply it but keep a backup
+            ai_engine.council.self_architect.backup_file(request.file_path)
+            abs_path = os.path.join(ai_engine.council.self_architect.root_dir, request.file_path)
+            with open(abs_path, 'w', encoding='utf-8') as f:
+                f.write(best_code)
+            return {"status": "SUCCESS", "message": f"Evolved {request.file_path} successfully."}
+        return {"status": "ERROR", "message": "No stable mutation found."}
+    except Exception as e:
+        return {"status": "ERROR", "message": str(e)}
+
+@app.get("/forge/skills")
+async def list_all_skills(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    from models import NeuralSkill
+    return db.query(NeuralSkill).filter(NeuralSkill.user_id == current_user.id).all()
+
+# --- P2P Endpoints ---
+
+@app.get("/p2p/status")
+async def get_p2p_status():
+    """Returns the current state of the Neural Mesh."""
+    return {
+        "node_id": p2p_node.node_id,
+        "is_stealth": p2p_node.is_stealth,
+        "peers": list(p2p_node.peers),
+        "reputation": {str(k): v for k, v in p2p_node.peer_reputation.items()},
+        "status": "ONLINE" if not p2p_node.is_stealth else "STEALTH"
+    }
+
+@app.post("/p2p/stealth")
+async def toggle_p2p_stealth(request: P2PStealthRequest):
+    """Activates or deactivates the Sovereign Shield (Tor/I2P)."""
+    await p2p_node.set_stealth_mode(request.enabled)
+    return {"status": "SUCCESS", "is_stealth": p2p_node.is_stealth}
+
 # --- Analytics & Graph Endpoints ---
 
 @app.get("/analytics/graph/topology")
@@ -418,19 +571,52 @@ async def get_graph_visual(user_id: str = "system_user"):
 @app.get("/")
 async def root(): return {"status": "ONLINE", "system": "Akasha Universal Library"}
 
+# --- Auth Endpoints ---
+
+@app.post("/auth/signup", response_model=Token)
+async def signup(request: UserCreate, db: Session = Depends(get_db)):
+    db_user = db.query(User).filter(User.username == request.username).first()
+    if db_user:
+        raise HTTPException(status_code=400, detail="Username already registered")
+    
+    hashed_password = auth_utils.get_password_hash(request.password)
+    new_user = User(
+        username=request.username,
+        email=request.email,
+        hashed_password=hashed_password
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    
+    access_token = auth_utils.create_access_token(data={"sub": new_user.username})
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@app.post("/auth/login", response_model=Token)
+async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.username == form_data.username).first()
+    if not user or not auth_utils.verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    access_token = auth_utils.create_access_token(data={"sub": user.username})
+    return {"access_token": access_token, "token_type": "bearer"}
 
 @app.post("/query/stream")
-async def stream_query(request: QueryRequest):
+async def stream_query(request: QueryRequest, current_user: User = Depends(get_current_user)):
     async def response_generator():
         q = request.query.lower().strip()
         
         # Identity Renaming Hook
-        identity_update = handle_identity_commands(request.query, request.user_id)
+        identity_update = handle_identity_commands(request.query, current_user.id)
         if identity_update:
             yield identity_update; return
 
         # User Identity Hook
-        user_identity_update = handle_user_identity(request.query, request.user_id)
+        user_identity_update = handle_user_identity(request.query, current_user.id)
         if user_identity_update:
             yield user_identity_update; return
 
@@ -440,10 +626,10 @@ async def stream_query(request: QueryRequest):
                 yield f"{word} "; await asyncio.sleep(0.03)
             return
         try:
-            vector_results = ai_engine.search_vectors(request.query, n_results=5, user_id=request.user_id)
+            vector_results = ai_engine.search_vectors(request.query, n_results=5, user_id=current_user.id)
             vector_context = vector_results.get("documents", [[]])[0]
             entities = [e['word'] for e in ai_engine.ner_pipeline(request.query)]
-            graph_context = graph_engine.search_graph_context(entities, user_id=request.user_id)
+            graph_context = graph_engine.search_graph_context(entities, user_id=current_user.id)
             synthesis = ai_engine.synthesize_graph_rag(request.query, vector_context, graph_context)
             full_answer = synthesis["answer"]
             for word in full_answer.split():
@@ -453,9 +639,9 @@ async def stream_query(request: QueryRequest):
     return StreamingResponse(response_generator(), media_type="text/plain")
 
 @app.post("/query/rag")
-async def query_rag(request: QueryRequest):
+async def query_rag(request: QueryRequest, current_user: User = Depends(get_current_user)):
     # Identity Renaming Hook
-    identity_update = handle_identity_commands(request.query, request.user_id)
+    identity_update = handle_identity_commands(request.query, current_user.id)
     if identity_update:
         return {"query": request.query, "answer": identity_update}
 
@@ -463,9 +649,9 @@ async def query_rag(request: QueryRequest):
     scrubbed_query = redactor.scrub(request.query)
 
     entities = [e['word'] for e in ai_engine.ner_pipeline(scrubbed_query)]
-    vector_results = ai_engine.search_vectors(scrubbed_query, n_results=5, user_id=request.user_id)
+    vector_results = ai_engine.search_vectors(scrubbed_query, n_results=5, user_id=current_user.id)
     vector_context = vector_results.get("documents", [[]])[0]
-    graph_context = graph_engine.search_graph_context(entities, user_id=request.user_id)
+    graph_context = graph_engine.search_graph_context(entities, user_id=current_user.id)
     is_poor = not vector_context or all(len(c) < 200 for c in vector_context)
     if is_poor:
         loop = asyncio.get_event_loop()
@@ -597,43 +783,113 @@ async def vision_analyze(file: UploadFile = File(...), user_id: str = Form("syst
     return {"description": description, "artifact_id": art.id}
 
 @app.websocket("/jarvis/sensory")
-async def jarvis_sensory_stream(websocket: WebSocket, user_id: str = "system_user"):
+async def jarvis_sensory_stream(websocket: WebSocket, token: Optional[str] = None):
+    """
+    The High-Speed Sensory Bridge: Handles real-time voice and visual streams.
+    Validated via JWT token for sovereign data isolation.
+    """
     await manager.connect(websocket)
+
+    # 1. Identify User from Token
+    user_id = "system_user" # Default
+    if token:
+        payload = auth_utils.decode_access_token(token)
+        if payload:
+            username = payload.get("sub")
+            db = SessionLocal()
+            user = db.query(User).filter(User.username == username).first()
+            if user: user_id = user.id
+            db.close()
+
     db = SessionLocal()
     settings = db.query(UserSettings).filter(UserSettings.user_id == user_id).first()
+
     try:
         while True:
             data = await websocket.receive_bytes()
-            if len(data) < 50000:
-                if settings and settings.voice_verification_enabled:
-                    if not speaker_verifier.verify(data, settings.voice_fingerprint): continue
+            # If it's a small chunk, it's likely audio
+            if len(data) < 100000:
                 transcript = await ingest.transcribe_audio_memory(data)
-                
-                # Zero-effort identity recognition
-                identity_update = handle_identity_commands(transcript, user_id)
-                if identity_update:
-                    await websocket.send_json({"type": "WAKE_RESPONSE", "payload": {"answer": identity_update, "monologue": "Calibrating new identity..."}})
-                    continue
+                if not transcript or len(transcript.strip()) < 2: continue
 
-                is_wake_triggered, command = ai_engine.council.gatekeeper.check_neural_name(transcript, settings.neural_name if settings else "Archivist")
-                if is_wake_triggered:
-                    result = await sensory.process_voice_command(command, user_id)
-                    await websocket.send_json({"type": "WAKE_RESPONSE", "payload": result, "vocal_trigger": True})
-                elif len(transcript) > 5:
+                print(f"Sensory: Captured Voice -> {transcript}")
+
+                # Wake Word / Command Logic
+                neural_names = [settings.neural_name] if settings and settings.neural_name else ["Archivist"]
+                is_wake, command = ai_engine.council.gatekeeper.check_neural_name(transcript, neural_names)
+
+                if is_wake:
+                    print(f"Sensory: Wake Word Detected. Routing Command -> {command}")
+                    
+                    # --- GLOBAL VOICE INTENT ROUTER ---
+                    # 1. Determine Intent
+                    intent = ai_engine.council.system1_router.determine_intent(command)
+                    
+                    # Signal intent to HUD for morphing
+                    await websocket.send_json({"type": "HUD_MORPH", "intent": intent})
+                    
+                    if intent == "SYSTEM_COMMAND" or "open" in command.lower() or "go to" in command.lower():
+                        # Handle Navigation and UI Settings
+                        nav_prompt = f"Categorize this UI request: '{command}'. Return JSON: {{'type': 'NAV', 'view': 'dashboard|butler|library|graph|network|forge|chat|palace|harvest|ego|settings', 'action': 'toggle_theme|none'}}"
+                        nav_res_raw = ai_engine.council.llm.invoke(nav_prompt)
+                        try:
+                            import json, re
+                            match = re.search(r'\{.*\}', nav_res_raw, re.DOTALL)
+                            nav_data = json.loads(match.group()) if match else {}
+                            
+                            await websocket.send_json({
+                                "type": "OS_CONTROL",
+                                "payload": nav_data,
+                                "message": f"Executing OS command: {command}"
+                            })
+                            continue
+                        except: pass
+
+                    # 2. Handle Actions (Butler)
+                    if "check" in command.lower() or "find" in command.lower() or "run" in command.lower():
+                        results = await executive.run_action_loop(command, {"user_id": user_id})
+                        await websocket.send_json({
+                            "type": "ACTION_COMPLETE",
+                            "payload": results,
+                            "message": f"Butler has completed the task: {command}"
+                        })
+                        continue
+
+                    # 3. Default: Graph-RAG Synthesis
+                    vector_res = ai_engine.search_vectors(command, user_id=user_id)
+                    docs = vector_res.get("documents", [[]])[0]
+                    synthesis = ai_engine.synthesize_graph_rag(command, docs, [])
+                    
+                    await websocket.send_json({
+                        "type": "WAKE_RESPONSE", 
+                        "payload": {
+                            "answer": synthesis["answer"],
+                            "monologue": synthesis["monologue"]
+                        }
+                    })
+                else:
                     await websocket.send_json({"type": "PASSIVE_TRANSCRIPT", "payload": transcript})
-            else:
-                result = await sensory.capture_visual_context(data, user_id)
-                if result: await websocket.send_json({"type": "VISUAL_CONTEXT", "payload": result})
-    except WebSocketDisconnect: manager.disconnect(websocket)
-    finally: db.close()
 
+            else:
+                # Large chunk: Likely visual context (image)
+                description = multimodal.visual_reasoning(data)
+                await websocket.send_json({"type": "VISUAL_CONTEXT", "payload": description})
+
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+    except Exception as e:
+        print(f"Sensory WebSocket Error: {e}")
+        manager.disconnect(websocket)
+    finally:
+        db.close()
 @app.post("/user/settings")
-async def update_settings(settings: Dict[str, Any], user_id: str = "system_user", db: Session = Depends(get_db)):
-    db_settings = db.query(UserSettings).filter(UserSettings.user_id == user_id).first()
+async def update_settings(settings: Dict[str, Any], current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    db_settings = db.query(UserSettings).filter(UserSettings.user_id == current_user.id).first()
     if not db_settings:
-        db_settings = UserSettings(user_id=user_id); db.add(db_settings)
+        db_settings = UserSettings(user_id=current_user.id); db.add(db_settings)
     if "neural_name" in settings: db_settings.neural_name = settings["neural_name"]
     if "assistant_persona" in settings: db_settings.assistant_persona = settings["assistant_persona"]
+    if "wake_words" in settings: db_settings.wake_words = settings["wake_words"]
     if "turbo_mode" in settings: db_settings.turbo_mode = settings["turbo_mode"]
     if "groq_api_key" in settings: db_settings.groq_api_key = settings["groq_api_key"]
     db.commit()
@@ -642,46 +898,55 @@ async def update_settings(settings: Dict[str, Any], user_id: str = "system_user"
     return db_settings
 
 @app.get("/user/psychology")
-async def get_user_psychology(user_id: str = "system_user", db: Session = Depends(get_db)):
-    profile = db.query(UserPsychology).filter(UserPsychology.user_id == user_id).first()
+async def get_user_psychology(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    profile = db.query(UserPsychology).filter(UserPsychology.user_id == current_user.id).first()
     if not profile: return {"status": "NO_PROFILE"}
     return {"known_name": profile.known_name, "ocean_traits": {"openness": profile.openness, "conscientiousness": profile.conscientiousness, "extraversion": profile.extraversion, "agreeableness": profile.agreeableness, "neuroticism": profile.neuroticism}, "cognitive_distortions": profile.identified_distortions, "habit_patterns": profile.habit_patterns, "current_mood": profile.current_mood}
 
 @app.post("/telemetry")
-async def log_telemetry(request: TelemetryRequest, db: Session = Depends(get_db)):
-    activity = telemetry_engine.log_activity(db, request.user_id, request.dict())
+async def log_telemetry(request: TelemetryRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    activity = telemetry_engine.log_activity(db, current_user.id, request.dict())
     return activity
 
 @app.get("/telemetry/recent")
-async def get_recent_telemetry(user_id: str = "system_user", db: Session = Depends(get_db)):
-    return telemetry_engine.get_recent_activity(db, user_id)
+async def get_recent_telemetry(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return telemetry_engine.get_recent_activity(db, current_user.id)
 
 @app.get("/artifacts")
-async def list_artifacts(user_id: str = "system_user", db: Session = Depends(get_db)):
-    artifacts = db.query(LibraryArtifact).filter(LibraryArtifact.user_id == user_id).order_by(LibraryArtifact.timestamp.desc()).all()
+async def list_artifacts(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    artifacts = db.query(LibraryArtifact).filter(LibraryArtifact.user_id == current_user.id).order_by(LibraryArtifact.timestamp.desc()).all()
     for art in artifacts: art.decrypt_content()
     return artifacts
 
 @app.get("/analytics")
-async def get_analytics(user_id: str = "system_user", db: Session = Depends(get_db)):
-    artifacts = db.query(LibraryArtifact).filter(LibraryArtifact.user_id == user_id).all()
+async def get_analytics(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    artifacts = db.query(LibraryArtifact).filter(LibraryArtifact.user_id == current_user.id).all()
     dist = {}
     for art in artifacts: dist[art.artifact_type] = dist.get(art.artifact_type, 0) + 1
-    settings = db.query(UserSettings).filter(UserSettings.user_id == user_id).first()
+    settings = db.query(UserSettings).filter(UserSettings.user_id == current_user.id).first()
     return {"total_count": len(artifacts), "category_distribution": dist, "system_status": "OPTIMAL", "neural_name": settings.neural_name if settings else "Archivist"}
 
 @app.post("/interpreter/run")
-async def run_interpreter(request: InterpreterRequest):
+async def run_interpreter(request: InterpreterRequest, current_user: User = Depends(get_current_user)):
     return {"output": ai_engine.council.scholar.execute_local_code(request.script)}
 
 @app.post("/actions/run")
-async def run_action_goal(request: ActionGoalRequest):
-    results = await executive.run_action_loop(request.goal, {"user_id": request.user_id})
+async def run_action_goal(request: ActionGoalRequest, current_user: User = Depends(get_current_user)):
+    results = await executive.run_action_loop(request.goal, {"user_id": current_user.id})
     return {"results": results}
 
 @app.get("/actions/history")
-async def get_action_history(user_id: str = "system_user"):
+async def get_action_history(current_user: User = Depends(get_current_user)):
     return executive.get_history()
+
+class SpeakRequest(BaseModel):
+    text: str
+
+@app.post("/voice/speak")
+async def voice_speak(request: SpeakRequest, current_user: User = Depends(get_current_user)):
+    """Triggers neural speech synthesis for the given text."""
+    success = await ai_engine.council.vocalist.speak_stream(request.text)
+    return {"status": "SUCCESS" if success else "ERROR"}
 
 @app.post("/plugins/generate")
 async def generate_plugin(request: PluginGenerateRequest):

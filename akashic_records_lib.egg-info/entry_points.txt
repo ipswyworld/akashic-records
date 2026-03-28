@@ -1,0 +1,2 @@
+[console_scripts]
+akasha = backend.scripts.akasha_cli:cli

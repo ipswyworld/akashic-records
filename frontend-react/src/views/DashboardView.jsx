@@ -1,16 +1,21 @@
-import React, { useState, useMemo, useLayoutEffect, useRef } from 'react';
+import React, { useState, useMemo, useLayoutEffect, useRef, useEffect } from 'react';
 import { 
-  Zap, Plus, Activity, UploadCloud, Globe, Unlock
+  Zap, Plus, Activity, UploadCloud, Globe, Unlock, Sparkles, TrendingUp, Cpu
 } from 'lucide-react';
 import gsap from 'gsap';
-import { ingestUrl } from '../api';
+import { ingestUrl, fetchEvolutionAnalytics } from '../api';
 import { getThemeColors } from '../components/CommonUI';
 
 const DashboardView = ({ analytics, recentArtifacts, onIngest, theme, setView }) => {
   const [ingestUrlInput, setIngestUrlInput] = useState('');
   const [isIngesting, setIsIngesting] = useState(false);
+  const [evolutionData, setEvolutionData] = useState(null);
   const colors = getThemeColors(theme);
   const containerRef = useRef(null);
+
+  useEffect(() => {
+    fetchEvolutionAnalytics().then(setEvolutionData).catch(console.error);
+  }, []);
 
   useLayoutEffect(() => {
     const ctx = gsap.context(() => {
@@ -33,7 +38,7 @@ const DashboardView = ({ analytics, recentArtifacts, onIngest, theme, setView })
         <div className="absolute -inset-1 bg-gradient-to-r from-amber-500/10 to-blue-500/10 blur-xl opacity-0 group-hover:opacity-100 transition-opacity duration-1000"></div>
         <div className="relative z-10">
           <h1 className={`text-2xl sm:text-3xl font-light mb-2 ${colors.textMain}`}><span className="text-amber-500 font-semibold tracking-wide">{analytics?.neural_name || 'Archivist'}</span> is Online.</h1>
-          <p className={`${colors.textMuted} max-w-xl mb-6 leading-relaxed text-sm sm:text-base`}>System nominal. {analytics?.total_count || 0} neural artifacts indexed. Processing latency at {analytics?.latency || '24'}ms. Awaiting cognitive input.</p>
+          <p className={`${colors.textMuted} max-w-xl mb-6 leading-relaxed text-sm sm:text-base`}>System nominal. {analytics?.total_count || 0} neural artifacts indexed. Evolution Status: <span className="text-blue-500 font-mono font-bold">{evolutionData?.evolution_status || 'INITIALIZING'}</span>. Awaiting cognitive input.</p>
           <div className="flex flex-wrap gap-3 sm:gap-4">
             <button onClick={() => setView('chat')} className="px-4 sm:px-5 py-2.5 bg-amber-500/10 text-amber-600 border border-amber-500/30 rounded-lg hover:bg-amber-500/20 transition-all flex items-center shadow-sm text-sm font-medium"><Zap className="w-4 h-4 mr-2" /> Ask AI</button>
             <button onClick={() => setView('library')} className={`px-4 sm:px-5 py-2.5 rounded-lg border flex items-center text-sm font-medium transition-all ${theme === 'dark' ? 'bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700' : 'bg-white text-stone-700 border-stone-200 hover:bg-stone-50 shadow-sm'}`}><Plus className="w-4 h-4 mr-2" /> Add Record</button>
@@ -43,6 +48,59 @@ const DashboardView = ({ analytics, recentArtifacts, onIngest, theme, setView })
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">
+          {/* Neural Evolution Card */}
+          <div className={`dashboard-card p-5 sm:p-6 rounded-2xl ${colors.panel} border ${colors.panelBorder} shadow-sm overflow-hidden relative`}>
+            <div className="absolute top-0 right-0 p-6 opacity-5">
+              <Sparkles className="w-24 h-24 text-amber-500" />
+            </div>
+            <h3 className={`text-xs sm:text-sm font-semibold ${colors.textMuted} uppercase tracking-wider mb-6 flex items-center`}><TrendingUp className="w-4 h-4 mr-2 text-amber-500" /> Neural Evolution</h3>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              <div>
+                <span className="text-[10px] font-bold text-stone-400 uppercase tracking-widest block mb-4">Fitness Trends</span>
+                <div className="flex items-end gap-1 h-20">
+                  {evolutionData?.performance_history.length > 0 ? evolutionData.performance_history.slice(-15).map((p, i) => (
+                    <div key={i} className="flex-1 group relative">
+                      <div 
+                        className={`w-full rounded-t-sm transition-all duration-500 ${p.fitness > 0.8 ? 'bg-green-500' : p.fitness > 0.5 ? 'bg-amber-500' : 'bg-rose-500'}`}
+                        style={{ height: `${p.fitness * 100}%` }}
+                      ></div>
+                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-20">
+                        <div className="bg-slate-900 text-white text-[8px] py-1 px-2 rounded whitespace-nowrap shadow-xl">
+                          {p.agent}: {(p.fitness * 100).toFixed(0)}%
+                        </div>
+                      </div>
+                    </div>
+                  )) : (
+                    <div className="flex-1 flex items-center justify-center border border-dashed border-stone-200 rounded-lg h-full">
+                      <span className="text-[10px] text-stone-400 italic">Gathering evolution metrics...</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <span className="text-[10px] font-bold text-stone-400 uppercase tracking-widest block mb-4">Forged Skills</span>
+                <div className="space-y-3">
+                  {evolutionData?.forged_skills.length > 0 ? evolutionData.forged_skills.map((s, i) => (
+                    <div key={i} className={`p-2.5 rounded-xl border ${theme === 'dark' ? 'bg-slate-800/50 border-slate-700' : 'bg-stone-50 border-stone-100'} flex items-center gap-3`}>
+                      <div className="p-1.5 bg-amber-500/10 text-amber-600 rounded-lg"><Cpu className="w-3 h-3" /></div>
+                      <div className="min-w-0">
+                        <div className="text-[10px] font-bold truncate">{s.name}</div>
+                        <div className="text-[8px] text-stone-400 truncate">{s.desc}</div>
+                      </div>
+                      <div className="ml-auto text-[8px] font-mono font-bold text-amber-500">x{s.count}</div>
+                    </div>
+                  )) : (
+                    <div className="p-4 border border-dashed border-stone-200 rounded-xl text-center">
+                      <span className="text-[10px] text-stone-400 italic">No skills forged yet.</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div className={`dashboard-card p-5 sm:p-6 rounded-2xl ${colors.panel} border ${colors.panelBorder} shadow-sm`}>
             <h3 className={`text-xs sm:text-sm font-semibold ${colors.textMuted} uppercase tracking-wider mb-4 flex items-center`}><Activity className="w-4 h-4 mr-2 text-blue-500" /> Cognitive Heatmap</h3>
             <div className="flex flex-wrap gap-1.5 opacity-80">

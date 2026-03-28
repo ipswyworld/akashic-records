@@ -1,54 +1,104 @@
 const API_BASE_URL = 'http://localhost:8001';
 
-export const fetchArtifacts = async (userId = 'system_user') => {
-  const response = await fetch(`${API_BASE_URL}/artifacts?user_id=${userId}`);
+const getHeaders = (isJson = true) => {
+  const token = localStorage.getItem('akasha_token');
+  const headers = {};
+  if (isJson) headers['Content-Type'] = 'application/json';
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  return headers;
+};
+
+// --- Auth ---
+export const login = async (username, password) => {
+  const formData = new FormData();
+  formData.append('username', username);
+  formData.append('password', password);
+
+  const response = await fetch(`${API_BASE_URL}/auth/login`, {
+    method: 'POST',
+    body: formData,
+  });
+  if (!response.ok) throw new Error('Invalid credentials');
+  const data = await response.json();
+  localStorage.setItem('akasha_token', data.access_token);
+  return data;
+};
+
+export const signup = async (username, email, password) => {
+  const response = await fetch(`${API_BASE_URL}/auth/signup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, email, password }),
+  });
+  if (!response.ok) throw new Error('Signup failed');
+  const data = await response.json();
+  localStorage.setItem('akasha_token', data.access_token);
+  return data;
+};
+
+export const logout = () => {
+  localStorage.removeItem('akasha_token');
+  window.location.reload();
+};
+
+// --- Artifacts ---
+export const fetchArtifacts = async () => {
+  const response = await fetch(`${API_BASE_URL}/artifacts`, {
+    headers: getHeaders(),
+  });
   if (!response.ok) throw new Error('Failed to fetch artifacts');
   return response.json();
 };
 
-export const updateUserSettings = async (settings, userId = 'system_user') => {
-  const response = await fetch(`${API_BASE_URL}/user/settings?user_id=${userId}`, {
+export const updateUserSettings = async (settings) => {
+  const response = await fetch(`${API_BASE_URL}/user/settings`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: getHeaders(),
     body: JSON.stringify(settings),
   });
   if (!response.ok) throw new Error('Failed to update settings');
   return response.json();
 };
 
-export const fetchPsychologyProfile = async (userId = 'system_user') => {
-  const response = await fetch(`${API_BASE_URL}/user/psychology?user_id=${userId}`);
+export const fetchPsychologyProfile = async () => {
+  const response = await fetch(`${API_BASE_URL}/user/psychology`, {
+    headers: getHeaders(),
+  });
   if (!response.ok) throw new Error('Failed to fetch psychology profile');
   return response.json();
 };
 
-export const fetchAnalytics = async (userId = 'system_user') => {
-  const response = await fetch(`${API_BASE_URL}/analytics?user_id=${userId}`);
+export const fetchAnalytics = async () => {
+  const response = await fetch(`${API_BASE_URL}/analytics`, {
+    headers: getHeaders(),
+  });
   if (!response.ok) throw new Error('Failed to fetch analytics');
   return response.json();
 };
 
-export const fetchGraphTopology = async (userId = 'system_user') => {
-  const response = await fetch(`${API_BASE_URL}/analytics/graph/topology?user_id=${userId}`);
+export const fetchGraphTopology = async () => {
+  const response = await fetch(`${API_BASE_URL}/analytics/graph/topology`, {
+    headers: getHeaders(),
+  });
   if (!response.ok) throw new Error('Failed to fetch graph topology');
   return response.json();
 };
 
-export const ingestUrl = async (url, userId = 'system_user') => {
+export const ingestUrl = async (url) => {
   const response = await fetch(`${API_BASE_URL}/ingest/clipper`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url, user_id: userId }),
+    headers: getHeaders(),
+    body: JSON.stringify({ url }),
   });
   if (!response.ok) throw new Error('Failed to ingest URL');
   return response.json();
 };
 
-export const streamChat = async (query, onToken, userId = 'system_user') => {
+export const streamChat = async (query, onToken) => {
   const response = await fetch(`${API_BASE_URL}/query/stream`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query, user_id: userId }),
+    headers: getHeaders(),
+    body: JSON.stringify({ query }),
   });
 
   if (!response.ok) throw new Error('Failed to start stream');
@@ -68,18 +118,20 @@ export const streamChat = async (query, onToken, userId = 'system_user') => {
 };
 
 // --- Action Engine (Butler) ---
-export const runActionGoal = async (goal, userId = 'system_user') => {
+export const runActionGoal = async (goal) => {
   const response = await fetch(`${API_BASE_URL}/actions/run`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ goal, user_id: userId }),
+    headers: getHeaders(),
+    body: JSON.stringify({ goal }),
   });
   if (!response.ok) throw new Error('Failed to run action goal');
   return response.json();
 };
 
-export const fetchActionHistory = async (userId = 'system_user') => {
-  const response = await fetch(`${API_BASE_URL}/actions/history?user_id=${userId}`);
+export const fetchActionHistory = async () => {
+  const response = await fetch(`${API_BASE_URL}/actions/history`, {
+    headers: getHeaders(),
+  });
   if (!response.ok) throw new Error('Failed to fetch action history');
   return response.json();
 };
@@ -88,10 +140,65 @@ export const fetchActionHistory = async (userId = 'system_user') => {
 export const runLocalCode = async (script) => {
   const response = await fetch(`${API_BASE_URL}/interpreter/run`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: getHeaders(),
     body: JSON.stringify({ script }),
   });
   if (!response.ok) throw new Error('Failed to run code');
+  return response.json();
+};
+
+// --- P2P Neural Mesh ---
+export const fetchP2PStatus = async () => {
+  const response = await fetch(`${API_BASE_URL}/p2p/status`, {
+    headers: getHeaders(),
+  });
+  if (!response.ok) throw new Error('Failed to fetch P2P status');
+  return response.json();
+};
+
+export const toggleP2PStealth = async (enabled) => {
+  const response = await fetch(`${API_BASE_URL}/p2p/stealth`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ enabled }),
+  });
+  if (!response.ok) throw new Error('Failed to toggle stealth mode');
+  return response.json();
+};
+
+export const fetchEvolutionAnalytics = async () => {
+  const response = await fetch(`${API_BASE_URL}/analytics/evolution`, {
+    headers: getHeaders(),
+  });
+  if (!response.ok) throw new Error('Failed to fetch evolution analytics');
+  return response.json();
+};
+
+export const triggerMutation = async (filePath, instruction) => {
+  const response = await fetch(`${API_BASE_URL}/forge/mutate`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ file_path: filePath, instruction }),
+  });
+  if (!response.ok) throw new Error('Mutation failed');
+  return response.json();
+};
+
+export const fetchNeuralSkills = async () => {
+  const response = await fetch(`${API_BASE_URL}/forge/skills`, {
+    headers: getHeaders(),
+  });
+  if (!response.ok) throw new Error('Failed to fetch neural skills');
+  return response.json();
+};
+
+export const speakText = async (text) => {
+  const response = await fetch(`${API_BASE_URL}/voice/speak`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ text }),
+  });
+  if (!response.ok) throw new Error('Failed to speak');
   return response.json();
 };
 
@@ -99,7 +206,7 @@ export const runLocalCode = async (script) => {
 export const sendAIFeedback = async (agentName, feedback) => {
   const response = await fetch(`${API_BASE_URL}/feedback`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: getHeaders(),
     body: JSON.stringify({ agent_name: agentName, feedback }),
   });
   if (!response.ok) throw new Error('Failed to send feedback');

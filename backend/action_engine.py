@@ -145,11 +145,32 @@ class ActionEngine:
 
     async def run_action_loop(self, goal: str, context_data: Optional[Dict] = None) -> List[Dict]:
         """
-        Takes a high-level goal and uses the AI to decompose it into a series of tool calls.
+        Phase 1 & 2: Autonomous loop. Prefers forged 'Neural Skills' if a match exists.
         """
         logger.info(f"ActionEngine: Initiating action loop for goal: {goal}")
         
-        # 1. Ask the AI (System 2) to plan the actions
+        # 1. Search for existing skills that might match the goal
+        try:
+            from database import SessionLocal
+            from models import NeuralSkill
+            db = SessionLocal()
+            existing_skill = db.query(NeuralSkill).filter(
+                (NeuralSkill.name.ilike(f"%{goal}%")) | 
+                (NeuralSkill.description.ilike(f"%{goal}%"))
+            ).first()
+            
+            if existing_skill:
+                print(f"ActionEngine: Reusing forged skill '{existing_skill.name}'...")
+                result = self.ai.council.scholar.execute_local_code(existing_skill.code)
+                existing_skill.success_count += 1
+                db.commit()
+                db.close()
+                return [{"agent": "NeuralForge", "tool": f"Reuse:{existing_skill.name}", "params": {}, "result": result}]
+            db.close()
+        except Exception as e:
+            logger.error(f"ActionEngine: Skill Store search failed: {e}")
+
+        # 2. If no skill found, proceed with planning (Existing Logic)
         tools_desc = "\n".join([f"- {name}: {info['description']} (Params: {info['parameters']})" 
                                for name, info in self.registry.tools.items()])
         

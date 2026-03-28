@@ -213,18 +213,41 @@ class IngestEngine:
         except: return []
 
     def scrape_web_memory(self, url: str) -> Dict:
-        """Extracts clean text and title from a URL."""
+        """
+        Extracts clean text and title from a URL. 
+        Uses Playwright for JS-heavy sites if available, falls back to BeautifulSoup.
+        """
         try:
-            headers = {"User-Agent": "Mozilla/5.0 AkashaArchivist/1.0"}
-            response = requests.get(url, timeout=10, headers=headers)
-            soup = BeautifulSoup(response.text, 'html.parser')
-            title = soup.title.string if soup.title else url
-            for script in soup(["script", "style", "nav", "footer", "header"]):
+            # Try Playwright for dynamic content
+            try:
+                from playwright.sync_api import sync_playwright
+                with sync_playwright() as p:
+                    browser = p.chromium.launch(headless=True)
+                    page = browser.new_page()
+                    page.goto(url, timeout=15000)
+                    # Wait for network idle or a specific time to let JS render
+                    page.wait_for_timeout(2000) 
+                    content = page.content()
+                    title = page.title()
+                    browser.close()
+                    soup = BeautifulSoup(content, 'html.parser')
+            except Exception as e:
+                print(f"IngestEngine: Playwright failed or not installed, falling back to BeautifulSoup: {e}")
+                headers = {"User-Agent": "Mozilla/5.0 AkashaArchivist/1.0"}
+                response = requests.get(url, timeout=10, headers=headers)
+                soup = BeautifulSoup(response.text, 'html.parser')
+                title = soup.title.string if soup.title else url
+
+            # Clean the soup
+            for script in soup(["script", "style", "nav", "footer", "header", "aside"]):
                 script.decompose()
+            
+            # Extract text
             text = soup.get_text()
             lines = (line.strip() for line in text.splitlines())
             chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
             clean_text = '\n'.join(chunk for chunk in chunks if chunk)
+            
             return {"title": title, "content": clean_text, "link": url}
         except Exception as e:
             return {"error": f"Scrape failed: {str(e)}"}

@@ -12,12 +12,51 @@ from rich.prompt import Confirm
 
 # Default local backend URL
 API_BASE = "http://localhost:8001"
+TOKEN_FILE = os.path.expanduser("~/.akasha_token")
 console = Console()
+
+def get_headers():
+    if os.path.exists(TOKEN_FILE):
+        with open(TOKEN_FILE, 'r') as f:
+            token = f.read().strip()
+            return {"Authorization": f"Bearer {token}"}
+    return {}
 
 @click.group()
 def cli():
     """🌌 Akasha Sovereign Neural Core CLI"""
     pass
+
+@cli.command()
+@click.option('--username', prompt=True)
+@click.option('--password', prompt=True, hide_input=True)
+def login(username, password):
+    """Authenticate with the Neural Core."""
+    url = f"{API_BASE}/auth/login"
+    try:
+        r = requests.post(url, data={"username": username, "password": password})
+        if r.status_code == 200:
+            token = r.json().get("access_token")
+            with open(TOKEN_FILE, 'w') as f:
+                f.write(token)
+            console.print("[bold green]Authenticated successfully.[/bold green]")
+        else:
+            console.print(f"[bold red]Login failed:[/bold red] {r.text}")
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {e}")
+
+@cli.command()
+@click.argument('text', nargs=-1)
+def speak(text):
+    """Trigger neural voice synthesis."""
+    text_str = " ".join(text)
+    if not text_str: return
+    url = f"{API_BASE}/voice/speak"
+    try:
+        requests.post(url, json={"text": text_str}, headers=get_headers())
+        console.print(f"[italic]Synthesizing: {text_str[:50]}...[/italic]")
+    except:
+        console.print("[bold red]Voice core unreachable.[/bold red]")
 
 @cli.command()
 @click.argument('query', nargs=-1)
@@ -29,11 +68,12 @@ def ask(query, stream):
         console.print("[bold red]Please provide a question.[/bold red]")
         return
 
+    headers = get_headers()
     if stream:
         url = f"{API_BASE}/query/stream"
         payload = {"query": query_str}
         try:
-            with requests.post(url, json=payload, stream=True) as r:
+            with requests.post(url, json=payload, stream=True, headers=headers) as r:
                 console.print(f"[bold yellow]Archivist Thinking...[/bold yellow]")
                 for chunk in r.iter_content(chunk_size=None, decode_unicode=True):
                     if chunk:
@@ -47,14 +87,10 @@ def ask(query, stream):
             url = f"{API_BASE}/query/rag"
             payload = {"query": query_str}
             try:
-                r = requests.post(url, json=payload)
+                r = requests.post(url, json=payload, headers=headers)
                 data = r.json()
-                # The response might be nested under 'answer' key
                 raw_ans = data.get("answer", "No response.")
-                if isinstance(raw_ans, dict):
-                    answer = raw_ans.get("answer", "No response.")
-                else:
-                    answer = raw_ans
+                answer = raw_ans.get("answer", str(raw_ans)) if isinstance(raw_ans, dict) else str(raw_ans)
                 console.print(Panel(answer, title="[bold yellow]Akasha Synthesis[/bold yellow]", border_style="yellow"))
             except Exception as e:
                 console.print(f"[bold red]Error:[/bold red] {e}")

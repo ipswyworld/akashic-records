@@ -1,0 +1,11 @@
+C:\Users\LENOVO\Desktop\akasha\backend\rust_p2p\target\debug\deps\multibase-f5c4078bda70b5e9.d: C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\lib.rs C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\base.rs C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\encoding.rs C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\error.rs C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\impls.rs
+
+C:\Users\LENOVO\Desktop\akasha\backend\rust_p2p\target\debug\deps\libmultibase-f5c4078bda70b5e9.rlib: C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\lib.rs C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\base.rs C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\encoding.rs C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\error.rs C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\impls.rs
+
+C:\Users\LENOVO\Desktop\akasha\backend\rust_p2p\target\debug\deps\libmultibase-f5c4078bda70b5e9.rmeta: C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\lib.rs C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\base.rs C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\encoding.rs C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\error.rs C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\impls.rs
+
+C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\lib.rs:
+C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\base.rs:
+C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\encoding.rs:
+C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\error.rs:
+C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\impls.rs:

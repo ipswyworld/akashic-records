@@ -10,14 +10,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   const summaryBox = document.getElementById('summary-box');
   
   const apiUrlInput = document.getElementById('apiUrl');
-  const userIdInput = document.getElementById('userId');
+  const tokenInput = document.getElementById('userId'); // Reusing existing ID for token
   const summaryText = document.getElementById('summary-text');
   const msgEl = document.getElementById('msg');
 
   // Load saved settings
-  const settings = await chrome.storage.local.get(['apiUrl', 'userId']);
+  const settings = await chrome.storage.local.get(['apiUrl', 'token']);
   apiUrlInput.value = settings.apiUrl || 'http://localhost:8001';
-  userIdInput.value = settings.userId || 'system_user';
+  tokenInput.value = settings.token || '';
+  tokenInput.placeholder = 'Akasha JWT Token';
+
+  const getHeaders = () => {
+    const headers = { 'Content-Type': 'application/json' };
+    if (tokenInput.value) headers['Authorization'] = `Bearer ${tokenInput.value}`;
+    return headers;
+  };
 
   // Toggle settings
   toggleBtn.addEventListener('click', () => {
@@ -30,29 +37,29 @@ document.addEventListener('DOMContentLoaded', async () => {
   saveBtn.addEventListener('click', async () => {
     await chrome.storage.local.set({
       apiUrl: apiUrlInput.value,
-      userId: userIdInput.value
+      token: tokenInput.value
     });
     settingsPanel.style.display = 'none';
     mainActions.style.display = 'flex';
-    showMsg('Identity Verified. 🗝️', '#03dac6');
+    showMsg('Sovereign Bridge Linked. 🗝️', '#03dac6');
   });
 
   // Clip current page
   clipBtn.addEventListener('click', async () => {
-    setLoading(clipBtn, 'Climbing Neural Core...');
+    setLoading(clipBtn, 'Vaulting Artifact...');
     
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       const response = await fetch(`${apiUrlInput.value}/ingest/clipper`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: tab.url, user_id: userIdInput.value })
+        headers: getHeaders(),
+        body: JSON.stringify({ url: tab.url })
       });
 
       if (response.ok) {
         showMsg('Artifact successfully vaulted. ✨', '#03dac6');
       } else {
-        showMsg('Ingestion failed. Core offline?', '#cf6679');
+        showMsg('Authorization Required. 🔐', '#cf6679');
       }
     } catch (err) {
       showMsg('Connection refused. 📡', '#cf6679');
@@ -69,14 +76,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       
-      // We first 'clip' it to get the content processed, or use a query endpoint
-      // For this sub-agent action, we'll ask the RAG engine about the current page
       const response = await fetch(`${apiUrlInput.value}/query/rag`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getHeaders(),
         body: JSON.stringify({ 
-          query: `Summarize this page briefly: ${tab.url}`, 
-          user_id: userIdInput.value 
+          query: `Summarize this page briefly: ${tab.url}` 
         })
       });
 
@@ -106,18 +110,20 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Listen for targeted element data from content script
   chrome.runtime.onMessage.addListener(async (message) => {
     if (message.action === "element_targeted") {
-      const { apiUrl, userId } = await chrome.storage.local.get(['apiUrl', 'userId']);
+      const { apiUrl, token } = await chrome.storage.local.get(['apiUrl', 'token']);
       
       try {
         await fetch(`${apiUrl || 'http://localhost:8001'}/telemetry`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
           body: JSON.stringify({
             type: "ELEMENT_TARGETED",
             title: `Targeted: ${message.selector}`,
             url: message.url,
-            content: message.text,
-            user_id: userId || 'system_user'
+            content: message.text
           })
         });
         console.log("Element vaulted.");

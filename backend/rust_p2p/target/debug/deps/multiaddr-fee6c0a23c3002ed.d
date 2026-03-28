@@ -1,0 +1,11 @@
+C:\Users\LENOVO\Desktop\akasha\backend\rust_p2p\target\debug\deps\multiaddr-fee6c0a23c3002ed.d: C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multiaddr-0.18.2\src\lib.rs C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multiaddr-0.18.2\src\errors.rs C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multiaddr-0.18.2\src\onion_addr.rs C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multiaddr-0.18.2\src\protocol.rs C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multiaddr-0.18.2\src\from_url.rs
+
+C:\Users\LENOVO\Desktop\akasha\backend\rust_p2p\target\debug\deps\libmultiaddr-fee6c0a23c3002ed.rlib: C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multiaddr-0.18.2\src\lib.rs C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multiaddr-0.18.2\src\errors.rs C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multiaddr-0.18.2\src\onion_addr.rs C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multiaddr-0.18.2\src\protocol.rs C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multiaddr-0.18.2\src\from_url.rs
+
+C:\Users\LENOVO\Desktop\akasha\backend\rust_p2p\target\debug\deps\libmultiaddr-fee6c0a23c3002ed.rmeta: C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multiaddr-0.18.2\src\lib.rs C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multiaddr-0.18.2\src\errors.rs C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multiaddr-0.18.2\src\onion_addr.rs C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multiaddr-0.18.2\src\protocol.rs C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multiaddr-0.18.2\src\from_url.rs
+
+C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multiaddr-0.18.2\src\lib.rs:
+C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multiaddr-0.18.2\src\errors.rs:
+C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multiaddr-0.18.2\src\onion_addr.rs:
+C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multiaddr-0.18.2\src\protocol.rs:
+C:\Users\LENOVO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multiaddr-0.18.2\src\from_url.rs:

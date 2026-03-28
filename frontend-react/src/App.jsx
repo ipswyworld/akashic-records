@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion'; // [OPTIMIZED]
 import { 
-  Bell, Mic, LayoutDashboard, Library, Network, 
+  Bell, Mic, LayoutDashboard, Library, Network, Globe, Hammer,
   MessageSquare, Building2, Sun, Moon, PanelLeftClose, 
   PanelLeftOpen, Settings, Zap, Sparkles, BrainCircuit,
   Command, Search, Plus, Activity, Unlock, X, Check, AlertCircle, Paperclip, Send
@@ -20,6 +21,11 @@ import EgoView from './views/EgoView';
 import ButlerView from './views/ButlerView';
 import SettingsView from './views/SettingsView';
 import GraphView from './views/GraphView';
+import NetworkView from './views/NetworkView';
+import ForgeView from './views/ForgeView';
+import AuthView from './views/AuthView';
+import ArcReactor from './components/ArcReactor';
+import { logout } from './api';
 
 class ErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { hasError: false, error: null }; }
@@ -39,11 +45,14 @@ export default function AkashaOS() {
 }
 
 function AkashaOSContent() {
+  const [isAuthenticated, setIsAuthenticated] = useState(true); // DORMANT MODE
   const [currentView, setCurrentView] = useState('dashboard');
   const [isSidebarOpen, setSidebarOpen] = useState(true);
   const [theme, setTheme] = useState('dark');
   const [toasts, setToasts] = useState([]);
   const [isListening, setIsListening] = useState(false);
+  const [activeIntent, setActiveIntent] = useState(null);
+  const [isActionActive, setIsActionActive] = useState(false);
   const [messages, setMessages] = useState([]);
   const [isSynthesizing, setIsSynthesizing] = useState(false);
   const socketRef = useRef(null);
@@ -61,10 +70,48 @@ function AkashaOSContent() {
   const userSettings = psychology?.status !== "NO_PROFILE" ? psychology : null;
 
   useEffect(() => {
+    if (!isAuthenticated) return;
+    
+    let mediaRecorder;
+    let stream;
+
+    const startRecording = async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+        
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0 && socketRef.current?.readyState === WebSocket.OPEN) {
+            socketRef.current.send(event.data);
+          }
+        };
+
+        mediaRecorder.start(1000); 
+      } catch (err) {
+        console.error("Microphone Access Error:", err);
+        setIsListening(false);
+      }
+    };
+
+    if (isListening) {
+      startRecording();
+    } else {
+      if (mediaRecorder) mediaRecorder.stop();
+      if (stream) stream.getTracks().forEach(track => track.stop());
+    }
+
+    return () => {
+      if (mediaRecorder) mediaRecorder.stop();
+      if (stream) stream.getTracks().forEach(track => track.stop());
+    };
+  }, [isListening, isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
     if (messages.length === 0 && analytics?.neural_name) {
       setMessages([{ role: 'ai', content: `Greetings ${userName}. I am ${analytics.neural_name}. My neural pathways are initialized. How may I assist your synthesis today?` }]);
     }
-  }, [analytics, userName]);
+  }, [analytics, userName, isAuthenticated]);
 
   useEffect(() => {
     if (!bgRef.current) return;
@@ -83,9 +130,11 @@ function AkashaOSContent() {
   };
 
   useEffect(() => {
+    if (!isAuthenticated) return;
     const connectSocket = () => {
       try {
-        const socket = new WebSocket('ws://localhost:8001/jarvis/sensory');
+        const token = localStorage.getItem('akasha_token');
+        const socket = new WebSocket(`ws://localhost:8001/jarvis/sensory?token=${token}`);
         socketRef.current = socket;
         socket.onmessage = (event) => {
           try {
@@ -93,9 +142,38 @@ function AkashaOSContent() {
             if (data.event === 'SERENDIPITY_REALIZATION') {
               setToasts(prev => [...prev, { id: Date.now(), message: data.payload, type: 'serendipity' }]);
             }
+            if (data.type === 'HUD_MORPH') {
+              setActiveIntent(data.intent);
+              if (data.intent === 'COMPLEX_REASONING') setCurrentView('graph');
+              if (data.intent === 'SYSTEM_COMMAND') setCurrentView('butler');
+              setTimeout(() => setActiveIntent(null), 5000);
+            }
             if (data.type === 'WAKE_RESPONSE') { 
               setMessages(prev => [...prev, { role: 'ai', content: data.payload.answer, monologue: data.payload.monologue }]); 
               setCurrentView('chat'); 
+              if (socketRef.current?.isMuted === false) speakText(data.payload.answer);
+            }
+            else if (data.type === 'OS_CONTROL') {
+              const { view, action } = data.payload;
+              setIsActionActive(true);
+              setTimeout(() => setIsActionActive(false), 3000);
+              if (view) {
+                setCurrentView(view);
+                setToasts(prev => [{ id: Date.now(), type: 'system', message: `Navigating to ${view}...` }, ...prev]);
+              }
+              if (action === 'toggle_theme') setTheme(theme === 'dark' ? 'light' : 'dark');
+              if (data.message) {
+                setMessages(prev => [...prev, { role: 'ai', content: data.message }]);
+                speakText(data.message);
+              }
+            }
+            else if (data.type === 'ACTION_COMPLETE') {
+              setIsActionActive(true);
+              setTimeout(() => setIsActionActive(false), 3000);
+              setMessages(prev => [...prev, { role: 'ai', content: data.message }]);
+              setCurrentView('butler');
+              speakText(data.message);
+              refreshData();
             }
             else if (data.event === 'NEW_ARTIFACT_INGESTED') { 
               refreshData(); 
@@ -110,7 +188,11 @@ function AkashaOSContent() {
     };
     connectSocket();
     return () => socketRef.current?.close();
-  }, []);
+  }, [isAuthenticated]);
+
+  if (!isAuthenticated) {
+    return <AuthView onAuthSuccess={() => setIsAuthenticated(true)} />;
+  }
 
   const NavItem = ({ icon: Icon, label, id }) => {
     const active = currentView === id;
@@ -147,6 +229,8 @@ function AkashaOSContent() {
           <NavItem icon={Zap} label="Butler" id="butler" />
           <NavItem icon={Library} label="Deep Library" id="library" />
           <NavItem icon={Network} label="Neural Graph" id="graph" />
+          <NavItem icon={Globe} label="Sovereign Network" id="network" />
+          <NavItem icon={Hammer} label="Neural Forge" id="forge" />
           <NavItem icon={MessageSquare} label="Archivist Chat" id="chat" />
           <NavItem icon={Building2} label="Memory Palace" id="palace" />
           <NavItem icon={Sparkles} label="Data Harvest" id="harvest" />
@@ -158,16 +242,29 @@ function AkashaOSContent() {
               <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold uppercase ${theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-300' : 'bg-stone-200 border-stone-300 text-stone-600'} border`}>{userInitials}</div>
               {isSidebarOpen && <span className={`ml-2 text-xs font-medium truncate max-w-[80px] ${theme === 'dark' ? 'text-slate-400' : 'text-stone-500'}`}>{userName}</span>}
             </div>
-            {isSidebarOpen && <div className="flex gap-1">
+            <div className="flex gap-1">
               <button onClick={() => setCurrentView('settings')} className="p-1.5 hover:bg-stone-100 rounded-lg transition-colors"><Settings className="w-4 h-4" /></button>
               <button onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} className="p-1.5 hover:bg-stone-100 rounded-lg transition-colors">{theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}</button>
-            </div>}
+              <button onClick={logout} title="Logout" className="p-1.5 hover:bg-red-500/10 text-red-500 rounded-lg transition-colors"><X className="w-4 h-4" /></button>
+            </div>
           </div>
           <button onClick={() => setSidebarOpen(!isSidebarOpen)} className={`w-full flex items-center ${isSidebarOpen ? 'justify-start px-2' : 'justify-center'} py-2.5 hover:bg-stone-100 rounded-lg transition-colors text-stone-500`}>{isSidebarOpen ? <><PanelLeftClose className="w-5 h-5 mr-2"/><span className="text-xs uppercase font-bold tracking-widest">Collapse</span></> : <PanelLeftOpen className="w-5 h-5"/>}</button>
         </div>
       </aside>
 
-      <main className="flex-1 flex flex-col relative min-w-0 h-screen z-10">
+      <main className="flex-1 flex flex-col relative min-w-0 h-screen z-10 overflow-hidden">
+        {/* HUD Overlay (Jarvis Style) */}
+        <div className={`absolute top-0 left-0 right-0 h-1 z-[70] transition-all duration-1000 ${isSynthesizing ? 'bg-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.5)]' : 'bg-transparent'}`}></div>
+        
+        {activeIntent && (
+          <div className="absolute top-24 left-1/2 -translate-x-1/2 z-[70] animate-in fade-in zoom-in duration-500">
+            <div className={`px-6 py-2 rounded-full border border-blue-500/20 bg-slate-900/80 backdrop-blur-xl text-[10px] font-black uppercase tracking-[0.3em] text-blue-500 shadow-2xl flex items-center gap-3`}>
+              <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></div>
+              Intent Detected: {activeIntent.replace('_', ' ')}
+            </div>
+          </div>
+        )}
+
         <header className={`h-16 border-b backdrop-blur-md flex items-center justify-between px-6 z-30 shrink-0 ${colors.header}`}>
           <div className="flex items-center text-sm font-medium text-stone-400 truncate">
             <span className="hidden sm:inline">Neural Core</span>
@@ -186,18 +283,38 @@ function AkashaOSContent() {
             </button>
           </div>
         </header>
-        <div className="flex-1 overflow-y-auto relative flex flex-col">
-          {currentView === 'dashboard' && <DashboardView analytics={analytics} recentArtifacts={artifacts} onIngest={refreshData} theme={theme} setView={setCurrentView} />}
-          {currentView === 'butler' && <ButlerView theme={theme} />}
-          {currentView === 'library' && <LibraryView artifacts={artifacts || []} analytics={analytics} theme={theme} />}
-          {currentView === 'graph' && <GraphView theme={theme} />}
-          {currentView === 'chat' && <ChatView messages={messages} setMessages={setMessages} isSynthesizing={isSynthesizing} setIsSynthesizing={setIsSynthesizing} theme={theme} analytics={analytics} />}
-          {currentView === 'palace' && <PalaceView analytics={analytics} theme={theme} />}
-          {currentView === 'harvest' && <DataHarvestView theme={theme} onIngest={refreshData} />}
-          {currentView === 'ego' && <EgoView theme={theme} />}
-          {currentView === 'settings' && <SettingsView userSettings={userSettings} analytics={analytics} onUpdate={(s) => updateSettingsMutation.mutate({ settings: s, userId: 'system_user' })} theme={theme} />}
+        <div className="flex-1 overflow-hidden relative flex flex-col perspective-1000">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={currentView}
+              initial={{ opacity: 0, z: -100, rotateX: 5 }}
+              animate={{ opacity: 1, z: 0, rotateX: 0 }}
+              exit={{ opacity: 0, z: 100, rotateX: -5 }}
+              transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+              className="flex-1 overflow-y-auto h-full w-full"
+            >
+              {currentView === 'dashboard' && <DashboardView analytics={analytics} recentArtifacts={artifacts} onIngest={refreshData} theme={theme} setView={setCurrentView} />}
+              {currentView === 'butler' && <ButlerView theme={theme} />}
+              {currentView === 'library' && <LibraryView artifacts={artifacts || []} analytics={analytics} theme={theme} />}
+              {currentView === 'graph' && <GraphView theme={theme} />}
+              {currentView === 'network' && <NetworkView theme={theme} />}
+              {currentView === 'forge' && <ForgeView theme={theme} />}
+              {currentView === 'chat' && <ChatView messages={messages} setMessages={setMessages} isSynthesizing={isSynthesizing} setIsSynthesizing={setIsSynthesizing} theme={theme} analytics={analytics} />}
+              {currentView === 'palace' && <PalaceView analytics={analytics} theme={theme} />}
+              {currentView === 'harvest' && <DataHarvestView theme={theme} onIngest={refreshData} />}
+              {currentView === 'ego' && <EgoView theme={theme} />}
+              {currentView === 'settings' && <SettingsView userSettings={userSettings} analytics={analytics} onUpdate={(s) => updateSettingsMutation.mutate({ settings: s, userId: 'system_user' })} theme={theme} />}
+            </motion.div>
+          </AnimatePresence>
         </div>
-        <button onClick={() => setIsListening(!isListening)} className={`absolute bottom-8 left-8 z-40 p-4 rounded-full shadow-xl shadow-amber-500/20 transition-all duration-500 ${isListening ? 'bg-amber-500 text-white scale-110' : (theme === 'dark' ? 'bg-slate-800 text-slate-400 border-slate-700' : 'bg-white text-stone-400 border border-stone-200 hover:border-amber-500 hover:text-amber-500 shadow-sm')}`}><Mic className={`w-6 h-6 ${isListening ? 'animate-pulse' : ''}`} /></button>
+        <div className="absolute bottom-10 left-1/2 -translate-x-1/2 z-40 flex flex-col items-center">
+          <div onClick={() => setIsListening(!isListening)}>
+            <ArcReactor isListening={isListening} isThinking={isSynthesizing} isActionActive={isActionActive} theme={theme} />
+          </div>
+          <span className={`text-[10px] font-bold uppercase tracking-[0.2em] mt-3 transition-all duration-500 ${isListening ? 'text-amber-500 opacity-100' : 'text-stone-500 opacity-40'}`}>
+            {isListening ? 'Sovereign Ears Active' : 'Neural Core Ready'}
+          </span>
+        </div>
       </main>
       <style dangerouslySetInnerHTML={{__html: `.custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; } .custom-scrollbar::-webkit-scrollbar-thumb { background: #d6d3d1; border-radius: 10px; } .hide-scrollbar::-webkit-scrollbar { display: none; }`}} />
     </div>

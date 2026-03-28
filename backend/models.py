@@ -3,6 +3,16 @@ import uuid
 import datetime
 from database import Base
 
+class User(Base):
+    """Sovereign User: The root identity for all data and settings."""
+    __tablename__ = "users"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    username = Column(String, unique=True, index=True, nullable=False)
+    email = Column(String, unique=True, index=True, nullable=False)
+    hashed_password = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    is_active = Column(Boolean, default=True)
+
 class LibraryArtifact(Base):
     """
     The core entity of the Universal Library. Replaces 'MemoryRecord'.
@@ -152,6 +162,7 @@ class UserSettings(Base):
     # Unified Identity (Replaces technical 'wake_names')
     neural_name = Column(String, default="Archivist")
     assistant_persona = Column(String, default="Archivist")
+    wake_words = Column(String, default="Archivist, Akasha, Jarvis") # Comma-separated triggers
     
     # Voice Fingerprinting (Stored as a vector/embedding)
     voice_fingerprint = Column(JSON, nullable=True) 
@@ -188,4 +199,41 @@ class UserPsychology(Base):
     
     # The AI's "Theory of Mind" regarding the user's current state
     current_mood = Column(String, default="Neutral")
+    core_values = Column(JSON, default=[]) # e.g. ["Freedom", "Knowledge", "Creativity"]
+    current_goals = Column(JSON, default=[]) # e.g. ["Write a book", "Learn Rust"]
+    life_narrative = Column(Text, nullable=True) # A synthesized "Autobiography"
     last_updated = Column(DateTime, default=datetime.datetime.utcnow)
+
+class NeuralSkill(Base):
+    """The Skill Library: Stores reusable, executable Python snippets discovered by agents."""
+    __tablename__ = "neural_skills"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    name = Column(String, index=True)
+    description = Column(Text)
+    code = Column(Text)
+    language = Column(String, default="python")
+    success_count = Column(Integer, default=1)
+    user_id = Column(String, index=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+class AgentPerformance(Base):
+    """Fitness Tracking: Records benchmark results for agents to guide evolution."""
+    __tablename__ = "agent_performance"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    agent_name = Column(String, index=True)
+    task_category = Column(String) # e.g., "Math", "Summarization"
+    fitness_score = Column(Float) # 0.0 to 1.0
+    latency_ms = Column(Float)
+    error_log = Column(Text, nullable=True)
+    user_id = Column(String, index=True)
+    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+
+class KnowledgeEvent(Base):
+    """The Akashic Log: Immutable event store for every modification to the library."""
+    __tablename__ = "knowledge_events"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    event_type = Column(String, index=True) # ARTIFACT_CREATED, THOUGHT_REFINED, CODE_EVOLVED
+    payload = Column(JSON) # The full state of the change
+    user_id = Column(String, index=True)
+    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+    version = Column(Integer, default=1)

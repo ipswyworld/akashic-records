@@ -120,6 +120,18 @@ class ChronosEngine:
             ingest = IngestEngine()
             intel_briefing = await loop.run_in_executor(None, self.ai.council.scout.deep_research, topic, ingest)
             
+            # 5. Automated Ingestion: Store the forage as a research_report artifact
+            from models import LibraryArtifact
+            new_artifact = LibraryArtifact(
+                user_id=user_id,
+                title=f"Proactive Forage: {topic}",
+                content=intel_briefing,
+                artifact_type="research_report",
+                metadata_json={"source": "chronos_observer", "topic": topic}
+            )
+            db_session.add(new_artifact)
+            db_session.commit()
+            
             return f"Web Intel Briefing on '{topic}':\n\n{intel_briefing}"
             
         except Exception as e:
@@ -248,43 +260,40 @@ class ChronosEngine:
 
     async def run_nocturnal_consolidation(self, user_id: str):
         """
-        Nocturnal Consolidation: The 'Dream' Phase of Akasha.
-        Fetches artifacts from the last 24 hours and uses the Weaver to find deep analogies.
+        Phase 4: Autonomous Dream Phase.
+        Agents debate distant memories to find lateral analogies and forge new insights.
         """
         db: Session = SessionLocal()
         try:
-            yesterday = datetime.utcnow() - timedelta(days=1)
-            recent_artifacts = db.query(LibraryArtifact).filter(
-                LibraryArtifact.user_id == user_id,
-                LibraryArtifact.timestamp >= yesterday
-            ).all()
-
-            if len(recent_artifacts) < 2:
-                logger.info(f"Chronos: Not enough artifacts for nocturnal consolidation for {user_id}.")
-                return
-
-            logger.info(f"Chronos: Starting nocturnal consolidation for {user_id} with {len(recent_artifacts)} artifacts...")
+            print(f"Chronos: Initiating Nocturnal Dream Phase for {user_id}...")
             
-            insights = []
-            # Compare adjacent artifacts for potential analogies
-            for i in range(len(recent_artifacts) - 1):
-                art_a = recent_artifacts[i]
-                art_b = recent_artifacts[i+1]
-                
-                # Use the Weaver agent to find analogies
-                analogy = self.ai.council.weaver.weave_analogy(art_a.content, art_b.content)
-                if analogy and "No analogy found" not in analogy:
-                    insight = f"Deep Analogy between '{art_a.title}' and '{art_b.title}': {analogy}"
-                    insights.append(insight)
-                    logger.info(f"Chronos Insight: {insight}")
-
-            if insights:
-                logger.info(f"Chronos: Nocturnal consolidation complete for {user_id}. {len(insights)} connections found.")
-            else:
-                logger.info(f"Chronos: Nocturnal consolidation complete for {user_id}. No deep analogies found.")
-
+            # 1. Select two seemingly unrelated recent artifacts
+            artifacts = db.query(LibraryArtifact).filter(LibraryArtifact.user_id == user_id).order_by(func.random()).limit(2).all()
+            if len(artifacts) < 2: return
+            
+            mem_a = artifacts[0].content
+            mem_b = artifacts[1].content
+            
+            # 2. Trigger Agentic Debate
+            print(f"Chronos: Agents are debating connections between '{artifacts[0].title}' and '{artifacts[1].title}'...")
+            debate_topic = f"Find a deep structural analogy or hidden connection between these two artifacts:\n1. {mem_a[:1000]}\n2. {mem_b[:1000]}"
+            loop = asyncio.get_event_loop()
+            eureka_insight = await loop.run_in_executor(None, self.ai.council.debate_council.run_debate, debate_topic)
+            
+            # 3. Save the 'Eureka' moment as a new artifact
+            from main import ingest_library_artifact
+            await ingest_library_artifact(
+                title=f"Eureka: {artifacts[0].title} × {artifacts[1].title}",
+                content=eureka_insight,
+                artifact_type="memory",
+                extra_meta={"source": "nocturnal_consolidation", "parent_ids": [artifacts[0].id, artifacts[1].id]},
+                db=db,
+                user_id=user_id
+            )
+            print(f"Chronos: Dream Phase complete. New insight vaulted.")
+            
         except Exception as e:
-            logger.error(f"Chronos: Nocturnal consolidation failed: {e}")
+            print(f"Chronos: Dream Phase failed: {e}")
         finally:
             db.close()
 

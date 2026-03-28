@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
-  Paperclip, Send, BrainCircuit, Sparkles
+  Paperclip, Send, BrainCircuit, Sparkles, Volume2, VolumeX
 } from 'lucide-react';
-import { streamChat } from '../api';
+import { streamChat, speakText } from '../api';
 import { getThemeColors } from '../components/CommonUI';
 
 const ChatView = ({ messages, setMessages, isSynthesizing, setIsSynthesizing, theme, analytics }) => {
   const [input, setInput] = useState('');
+  const [isMuted, setIsMuted] = useState(true);
   const messagesEndRef = useRef(null);
   const colors = getThemeColors(theme);
 
@@ -19,12 +20,18 @@ const ChatView = ({ messages, setMessages, isSynthesizing, setIsSynthesizing, th
     setInput('');
     setIsSynthesizing(true);
     try {
+      let fullResponse = "";
       await streamChat(input, (token, full) => {
+        fullResponse = full;
         setMessages(prev => {
           const last = prev[prev.length - 1];
           return last.role === 'ai' ? [...prev.slice(0, -1), { ...last, content: full }] : [...prev, { role: 'ai', content: full }];
         });
       });
+      
+      if (!isMuted) {
+        speakText(fullResponse).catch(console.error);
+      }
     } catch (err) { setMessages(prev => [...prev, { role: 'ai', content: 'SYSTEM_ERROR: Neural core unreachable.' }]); } finally { setIsSynthesizing(false); }
   };
 
@@ -61,6 +68,9 @@ const ChatView = ({ messages, setMessages, isSynthesizing, setIsSynthesizing, th
       </div>
       <div className={`shrink-0 border-t p-3 sm:p-4 z-20 ${theme === 'dark' ? 'bg-slate-950/95 border-slate-800' : 'bg-[#fcfaf7] border-stone-200'}`}>
         <div className={`relative flex items-end gap-2 border rounded-xl p-1.5 sm:p-2 focus-within:ring-2 focus-within:ring-amber-500/20 transition-all shadow-sm ${colors.inputBg} ${colors.panelBorder}`}>
+          <button onClick={() => setIsMuted(!isMuted)} className={`p-2 shrink-0 rounded-lg transition-all ${!isMuted ? 'text-amber-500 bg-amber-500/10' : 'text-stone-400 hover:bg-stone-100'}`}>
+            {isMuted ? <VolumeX className="w-4 h-4 sm:w-5 sm:h-5" /> : <Volume2 className="w-4 h-4 sm:w-5 sm:h-5" />}
+          </button>
           <button className="p-2 text-stone-400 hover:text-stone-600 shrink-0"><Paperclip className="w-4 h-4 sm:w-5 sm:h-5" /></button>
           <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }} placeholder={`Talk to ${analytics?.neural_name || 'Archivist'}...`} className={`w-full bg-transparent border-none placeholder-stone-400 focus:outline-none py-2 max-h-32 resize-none text-sm sm:text-base ${colors.textMain}`} rows="1" />
           <button onClick={handleSend} disabled={!input.trim() || isSynthesizing} className={`p-2 shrink-0 rounded-lg transition-all ${input.trim() && !isSynthesizing ? 'bg-amber-500 text-white shadow-sm' : 'text-stone-300 bg-stone-100'}`}><Send className="w-4 h-4" /></button>
