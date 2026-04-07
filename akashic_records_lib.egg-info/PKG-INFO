@@ -1,6 +1,6 @@
 Metadata-Version: 2.1
 Name: akashic-records-lib
-Version: 0.1.3
+Version: 0.1.5
 Summary: Sovereign Neural Core CLI for the Akasha Universal Library
 Requires-Python: >=3.8
 Description-Content-Type: text/markdown
@@ -113,7 +113,7 @@ The `akasha` CLI allows you to interact with the Neural Core directly from your 
 *   **Ingest a file:** `akasha ingest ./my_notes.txt`
 *   **Visualize your Ego:** `akasha ego`
 *   **Check system pulse:** `akasha pulse`
-*   **Rename your Core:** `akasha rename "Jarvis"`
+*   **Rename your Core:** `akasha rename "Archivist"`
 
 ---
 

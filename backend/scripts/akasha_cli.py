@@ -167,12 +167,15 @@ def pulse():
         console.print(f"[bold red]Error:[/bold red] {e}")
 
 @cli.command()
-def train():
-    """Trigger specialized Economist training on the chronojanus dataset."""
-    url = f"{API_BASE}/user/training/economist"
-    console.print("[bold yellow]Initiating Economist training on chronojanus...[/bold yellow]")
+@click.argument('agent_name', default="Economist")
+@click.argument('folder_path', default="chronojanus")
+def train(agent_name, folder_path):
+    """Universal Specialist Training: Point a librarian at any dataset."""
+    url = f"{API_BASE}/user/training/specialize"
+    console.print(f"[bold yellow]Initiating {agent_name} specialization on '{folder_path}'...[/bold yellow]")
     try:
-        r = requests.post(url, headers=get_headers())
+        payload = {"agent_name": agent_name, "folder_path": folder_path}
+        r = requests.post(url, json=payload, headers=get_headers())
         data = r.json()
         if data.get("status") == "TRAINING_STARTED":
             console.print(f"[bold green]Success:[/bold green] {data.get('message')}")

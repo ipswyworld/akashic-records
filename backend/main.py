@@ -921,20 +921,38 @@ async def ingest_folder_endpoint(background_tasks: BackgroundTasks, folder_path:
     background_tasks.add_task(process_batch_ingestion, all_files, user_id)
     return {"status": "FOLDER_INGESTION_STARTED", "file_count": len(all_files)}
 
-@app.post("/user/training/economist")
-async def train_economist(background_tasks: BackgroundTasks, current_user: User = Depends(get_current_user)):
-    """Specialized training for the Economist using the chronojanus dataset."""
-    chronojanus_path = os.path.join(os.getcwd(), "akasha_data", "chronojanus")
-    if not os.path.exists(chronojanus_path):
-        return {"status": "ERROR", "message": "Chronojanus data not found in akasha_data/."}
+class SpecializationRequest(BaseModel):
+    agent_name: str
+    folder_path: str
+    user_id: Optional[str] = "system_user"
+
+@app.post("/user/training/specialize")
+async def train_specialist(request: SpecializationRequest, background_tasks: BackgroundTasks, current_user: User = Depends(get_current_user)):
+    """Universal training endpoint to specialize an agent on a specific dataset."""
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    target_path = request.folder_path
+    
+    if not os.path.isabs(target_path):
+        target_path = os.path.join(base_dir, "akasha_data", request.folder_path)
+    
+    if not os.path.exists(target_path):
+        return {"status": "ERROR", "message": f"Dataset not found at {target_path}"}
     
     all_files = []
-    for root, dirs, files in os.walk(chronojanus_path):
+    for root, dirs, files in os.walk(target_path):
         for name in files:
-            all_files.append({"tmp_path": os.path.join(root, name), "filename": name})
+            if name.endswith(('.py', '.md', '.txt', '.yml', '.yaml', '.json', '.csv', '.pdf', '.docx')):
+                all_files.append({"tmp_path": os.path.join(root, name), "filename": name})
             
-    background_tasks.add_task(process_batch_ingestion, all_files, current_user.id)
-    return {"status": "TRAINING_STARTED", "message": f"Economist training on {len(all_files)} chronojanus artifacts."}
+    if not all_files:
+        return {"status": "ERROR", "message": f"No processable files found in {request.folder_path}."}
+
+    background_tasks.add_task(process_batch_ingestion, all_files, current_user.id, False)
+    
+    return {
+        "status": "TRAINING_STARTED", 
+        "message": f"Specializing {request.agent_name} on {len(all_files)} artifacts from '{request.folder_path}'."
+    }
 
 @app.post("/ingest/audio")
 async def ingest_audio(file: UploadFile = File(...), user_id: str = Form("system_user"), db: Session = Depends(get_db)):
