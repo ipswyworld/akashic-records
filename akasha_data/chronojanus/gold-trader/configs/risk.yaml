@@ -1,3 +1,0 @@
-risk_per_trade: 0.005  # 0.5% default, change as needed
-max_daily_drawdown: 0.03
-max_total_drawdown: 0.05
