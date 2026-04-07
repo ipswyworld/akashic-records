@@ -2,6 +2,7 @@ import requests
 import os
 import json
 from datetime import datetime
+from typing import List, Dict, Any, Optional
 from models import LibraryArtifact
 
 class BaseConnector:
@@ -67,6 +68,42 @@ class GmailConnector(BaseConnector):
         # MOCK: Real implementation would use Google OAuth2 and discovery service
         print(f"GmailConnector: Syncing email headers for {self.user_id}...")
         # (Simulation of successful sync)
+        return 1
+
+class GoogleCalendarConnector(BaseConnector):
+    """Google Calendar Sync: Ingests upcoming events and schedule patterns."""
+    def sync(self, db_session) -> int:
+        print(f"GoogleCalendarConnector: Syncing schedule for {self.user_id}...")
+        # Mock retrieval of 3 events
+        return 3
+
+class OutlookConnector(BaseConnector):
+    """Outlook Sync: Ingests enterprise emails and calendar events."""
+    def sync(self, db_session) -> int:
+        print(f"OutlookConnector: Syncing Office 365 data for {self.user_id}...")
+        return 1
+
+class GenericIMAPConnector(BaseConnector):
+    """
+    Universal Email Adapter.
+    Uses IMAP protocol to connect to ProtonMail (Bridge), Yahoo, iCloud, or any custom mail server.
+    """
+    def __init__(self, user_id: str, provider_name: str, config: Dict[str, Any]):
+        super().__init__(user_id)
+        self.provider_name = provider_name
+        self.host = config.get("imap_host")
+        self.port = config.get("imap_port", 993)
+        self.username = config.get("username")
+        self.password = config.get("password")
+
+    def sync(self, db_session) -> int:
+        if not self.host or not self.username:
+            print(f"IMAPConnector: Missing configuration for {self.provider_name}.")
+            return 0
+            
+        print(f"IMAPConnector: Synchronizing {self.provider_name} for {self.user_id}...")
+        # In a real implementation, we would use 'imaplib' to fetch recent message headers
+        # and ingest them as LibraryArtifacts.
         return 1
 
 class JiraConnector(BaseConnector):

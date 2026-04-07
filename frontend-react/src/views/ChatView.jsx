@@ -21,17 +21,25 @@ const ChatView = ({ messages, setMessages, isSynthesizing, setIsSynthesizing, th
     setIsSynthesizing(true);
     try {
       let fullResponse = "";
+      let lastSpokenIndex = 0;
+
       await streamChat(input, (token, full) => {
         fullResponse = full;
         setMessages(prev => {
           const last = prev[prev.length - 1];
           return last.role === 'ai' ? [...prev.slice(0, -1), { ...last, content: full }] : [...prev, { role: 'ai', content: full }];
         });
+
+        // PROJECT FLASH: JIT Voice (Speak as sentences are finished)
+        if (!isMuted) {
+          const sentences = full.match(/[^.!?]+[.!?]+/g);
+          if (sentences && sentences.length > lastSpokenIndex) {
+            const nextSentence = sentences[lastSpokenIndex];
+            speakText(nextSentence).catch(console.error);
+            lastSpokenIndex++;
+          }
+        }
       });
-      
-      if (!isMuted) {
-        speakText(fullResponse).catch(console.error);
-      }
     } catch (err) { setMessages(prev => [...prev, { role: 'ai', content: 'SYSTEM_ERROR: Neural core unreachable.' }]); } finally { setIsSynthesizing(false); }
   };
 

@@ -4,6 +4,25 @@ import torch.optim as optim
 from typing import List, Optional, Dict
 import numpy as np
 
+class HardwareDoctor:
+    """Auto-detects system constraints for dynamic inference backend selection."""
+    @staticmethod
+    def get_recommendation() -> str:
+        try:
+            if torch.cuda.is_available():
+                vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+                if vram_gb > 16:
+                    return "vllm"
+                elif vram_gb > 6:
+                    return "ollama"
+                else:
+                    return "llamacpp"
+            elif torch.backends.mps.is_available():
+                return "llamacpp"
+        except Exception:
+            pass
+        return "llamacpp"
+
 class NeuralVAE(nn.Module):
     """
     Variational Autoencoder for 'Digital Soul' Compression.

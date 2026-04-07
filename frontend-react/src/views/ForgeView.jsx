@@ -12,6 +12,12 @@ const ForgeView = ({ theme }) => {
   const [instruction, setInstruction] = useState('');
   const [isForging, setIsForging] = useState(false);
   const [status, setStatus] = useState(null);
+  
+  // --- Phase 2: Macro Recording State ---
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordGoal, setRecordGoal] = useState('');
+  // --------------------------------------
+
   const colors = getThemeColors(theme);
 
   const getSkills = async () => {
@@ -42,6 +48,42 @@ const ForgeView = ({ theme }) => {
     }
   };
 
+  // --- Phase 2: Macro Recording Logic ---
+  const toggleRecording = async () => {
+    if (!isRecording) {
+      // Start Recording
+      try {
+        const res = await fetch('http://localhost:8001/forge/record/start', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${localStorage.getItem('akasha_token')}` }
+        });
+        if (res.ok) {
+          setIsRecording(true);
+          setStatus({ type: 'info', message: 'Neural Recording ACTIVE. Perform tasks now.' });
+        }
+      } catch (err) { console.error(err); }
+    } else {
+      // Stop Recording
+      setIsForging(true);
+      setStatus({ type: 'info', message: 'Distilling neural steps into code...' });
+      try {
+        const res = await fetch('http://localhost:8001/forge/record/stop', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${localStorage.getItem('akasha_token')}` }
+        });
+        const data = await res.json();
+        if (data.status === 'SUCCESS') {
+          setIsRecording(false);
+          setStatus({ type: 'success', message: `Successfully forged skill: ${data.skill.name}` });
+          getSkills();
+        } else {
+          setStatus({ type: 'error', message: data.message });
+        }
+      } catch (err) { console.error(err); } finally { setIsForging(false); }
+    }
+  };
+  // --------------------------------------
+
   return (
     <div className="p-6 sm:p-10 max-w-7xl mx-auto w-full animate-in fade-in duration-700">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-10 gap-6">
@@ -52,8 +94,25 @@ const ForgeView = ({ theme }) => {
             </div>
             <h1 className={`text-3xl font-bold tracking-tight ${theme === 'dark' ? 'text-slate-100' : 'text-stone-800'}`}>Neural Forge</h1>
           </div>
-          <p className="text-stone-500 text-sm max-w-md">Evolve Akasha's source code through Darwinian mutation and selection.</p>
+          <p className="text-stone-500 text-sm max-w-md">Evolve Akasha's source code through Darwinian mutation or record macros.</p>
         </div>
+
+        {/* --- Macro Recorder Widget --- */}
+        <div className={`p-4 rounded-2xl border ${colors.panel} ${colors.panelBorder} flex items-center gap-4 shadow-sm`}>
+          <div className="flex flex-col">
+            <span className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">Macro Recorder</span>
+            <span className={`text-[8px] font-bold ${isRecording ? 'text-rose-500 animate-pulse' : 'text-stone-400'}`}>
+              {isRecording ? 'RECORDING ACTIVE' : 'SYSTEM IDLE'}
+            </span>
+          </div>
+          <button 
+            onClick={toggleRecording}
+            className={`p-3 rounded-full transition-all ${isRecording ? 'bg-rose-500 text-white shadow-lg shadow-rose-500/20' : 'bg-stone-100 text-stone-400'}`}
+          >
+            {isRecording ? <Zap className="w-4 h-4" /> : <Layers className="w-4 h-4" />}
+          </button>
+        </div>
+        {/* ---------------------------- */}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">

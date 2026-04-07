@@ -103,7 +103,7 @@ The `akasha` CLI allows you to interact with the Neural Core directly from your 
 *   **Ingest a file:** `akasha ingest ./my_notes.txt`
 *   **Visualize your Ego:** `akasha ego`
 *   **Check system pulse:** `akasha pulse`
-*   **Rename your Core:** `akasha rename "Jarvis"`
+*   **Rename your Core:** `akasha rename "Archivist"`
 
 ---
 

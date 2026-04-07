@@ -50,6 +50,14 @@ export const fetchArtifacts = async () => {
   return response.json();
 };
 
+export const fetchUserSettings = async () => {
+  const response = await fetch(`${API_BASE_URL}/user/settings`, {
+    headers: getHeaders(),
+  });
+  if (!response.ok) throw new Error('Failed to fetch settings');
+  return response.json();
+};
+
 export const updateUserSettings = async (settings) => {
   const response = await fetch(`${API_BASE_URL}/user/settings`, {
     method: 'POST',
@@ -94,13 +102,41 @@ export const ingestUrl = async (url) => {
   return response.json();
 };
 
+// --- Project Flash: Client-Side Reflex Cache ---
+const REFLEX_CACHE_KEY = 'akasha_reflex_cache';
+
+const getReflexCache = () => {
+  const cached = localStorage.getItem(REFLEX_CACHE_KEY);
+  return cached ? JSON.parse(cached) : {};
+};
+
+const storeInReflexCache = (query, response) => {
+  const cache = getReflexCache();
+  cache[query.toLowerCase().trim()] = response;
+  // Keep only last 50 items
+  const keys = Object.keys(cache);
+  if (keys.length > 50) delete cache[keys[0]];
+  localStorage.setItem(REFLEX_CACHE_KEY, JSON.stringify(cache));
+};
+
 export const streamChat = async (query, onToken) => {
+  const q = query.toLowerCase().trim();
+  const cache = getReflexCache();
+  
+  // 1. Instant Reflex Hit (<1ms)
+  if (cache[q]) {
+    console.log("Project Flash: Client Reflex HIT.");
+    onToken(cache[q], cache[q]);
+    return cache[q];
+  }
+
   const response = await fetch(`${API_BASE_URL}/query/stream`, {
     method: 'POST',
     headers: getHeaders(),
     body: JSON.stringify({ query }),
   });
-
+  
+  // ... (rest of the streaming logic)
   if (!response.ok) throw new Error('Failed to start stream');
 
   const reader = response.body.getReader();
@@ -114,6 +150,9 @@ export const streamChat = async (query, onToken) => {
     fullContent += token;
     onToken(token, fullContent);
   }
+  
+  // Store in reflex cache for next time
+  storeInReflexCache(query, fullContent);
   return fullContent;
 };
 

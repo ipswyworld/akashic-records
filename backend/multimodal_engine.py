@@ -66,6 +66,24 @@ class MultimodalEngine:
             "timestamp": str(datetime.datetime.utcnow())
         }
 
+    def analyze_affect(self, audio_bytes: bytes) -> dict:
+        """
+        Phase 3: Affective Computing.
+        Analyzes audio for stress, fatigue, and excitement.
+        """
+        import random
+        # In a real implementation, this would use a specialized model.
+        stress_level = random.uniform(0.0, 1.0)
+        fatigue_level = random.uniform(0.0, 1.0)
+        excitement_level = random.uniform(0.0, 1.0)
+        
+        return {
+            "stress": stress_level,
+            "fatigue": fatigue_level,
+            "excitement": excitement_level,
+            "detected_mood": "Stressed" if stress_level > 0.7 else "Calm"
+        }
+
     def process_image(self, image_bytes: bytes) -> dict:
         """Analyze image and return its visual features."""
         image = Image.open(io.BytesIO(image_bytes))

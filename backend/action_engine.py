@@ -18,7 +18,12 @@ class ToolRegistry:
             },
             "read_file": {
                 "func": self.read_file,
-                "description": "Reads the content of a file.",
+                "description": "Reads the content of a file. Fails gracefully if missing.",
+                "parameters": {"file_path": "string"}
+            },
+            "file_exists": {
+                "func": self.file_exists,
+                "description": "Checks if a file exists before reading/writing.",
                 "parameters": {"file_path": "string"}
             },
             "write_file": {
@@ -79,6 +84,10 @@ class ToolRegistry:
             return json.dumps(files)
         except Exception as e:
             return f"Error: {str(e)}"
+
+    def file_exists(self, file_path: str) -> str:
+        exists = os.path.exists(file_path)
+        return "True" if exists else "False"
 
     def read_file(self, file_path: str) -> str:
         try:
@@ -142,6 +151,59 @@ class ActionEngine:
         self.history: List[Dict] = []
         self.butler = AutonomousActionManager(self)
         self.is_air_gapped = False # Sovereign mode flag
+        
+        # --- Phase 2: Macro Recording ---
+        self.is_recording = False
+        self.recording_session: List[Dict] = []
+        # --------------------------------
+
+    async def start_recording(self):
+        print("ActionEngine: Macro Recording started.")
+        self.is_recording = True
+        self.recording_session = []
+
+    async def stop_recording(self, user_id: str = "system_user") -> Dict[str, Any]:
+        print(f"ActionEngine: Macro Recording stopped. Captured {len(self.recording_session)} steps.")
+        self.is_recording = False
+        
+        if not self.recording_session:
+            return {"status": "ERROR", "message": "No steps recorded."}
+        
+        # --- Feature 6: No-Code Forge (Self-Architect Distillation) ---
+        # We ask the Self-Architect to distill these steps into a single Python 'NeuralSkill'
+        macro_desc = json.dumps(self.recording_session, indent=2)
+        distillation_prompt = (
+            f"You are the Akasha Self-Architect. Distill the following sequence of tool-call steps into a single, "
+            f"clean, and efficient Python function that can be saved as a 'NeuralSkill'. "
+            f"The steps are: {macro_desc}\n\n"
+            f"Return a JSON object with 'name', 'description', and 'code'."
+        )
+        
+        try:
+            # We use the Self-Architect to reason about the code
+            distilled_skill = self.ai.council.self_architect.llm.invoke(distillation_prompt)
+            # (In a real implementation, we would use a JsonOutputParser here)
+            import re
+            match = re.search(r'\{.*\}', distilled_skill, re.DOTALL)
+            if match:
+                skill_data = json.loads(match.group())
+                # Save to database (Simplified)
+                from database import SessionLocal
+                from models import NeuralSkill
+                db = SessionLocal()
+                new_skill = NeuralSkill(
+                    user_id=user_id,
+                    name=skill_data.get("name", "Recorded Skill"),
+                    description=skill_data.get("description", "Automated macro."),
+                    code=skill_data.get("code", ""),
+                    success_count=1
+                )
+                db.add(new_skill); db.commit(); db.refresh(new_skill)
+                db.close()
+                return {"status": "SUCCESS", "skill": skill_data}
+        except Exception as e:
+            print(f"ActionEngine: Failed to distill macro: {e}")
+            return {"status": "ERROR", "message": str(e)}
 
     async def run_action_loop(self, goal: str, context_data: Optional[Dict] = None) -> List[Dict]:
         """
@@ -228,6 +290,12 @@ class ActionEngine:
                 "result": result,
                 "timestamp": datetime.utcnow().isoformat()
             }
+            
+            # --- Phase 2: Record to Session ---
+            if self.is_recording:
+                self.recording_session.append(record)
+            # ----------------------------------
+
             self.history.append(record)
             return record
             

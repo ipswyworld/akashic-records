@@ -145,3 +145,32 @@ class BlockchainAdapter:
         self.subchain.add_artifact(tombstone)
         # Force an anchor if it's a deletion proof (high priority)
         self.anchor_subchain_batch()
+
+    async def migrate_to_cold_storage(self, artifact_id: str, content: str) -> str:
+        """
+        Phase 4: Cold Storage Strategy.
+        Migrates old/rarely used memories to Arweave/IPFS while keeping embeddings local.
+        """
+        print(f"Bifrost-Bridge: Migrating Artifact {artifact_id} to Cold Storage (Arweave/IPFS)...")
+        
+        # Mock Arweave/IPFS transaction
+        # In a real implementation, we would use an Arweave wallet or IPFS gateway
+        import uuid
+        tx_id = f"AR_{uuid.uuid4().hex}"
+        
+        # We anchor the migration TX to the subchain for provenance
+        migration_record = {
+            "id": artifact_id,
+            "cold_storage_tx": tx_id,
+            "provider": "ARWEAVE",
+            "timestamp": os.times()
+        }
+        self.subchain.add_artifact(migration_record)
+        
+        return tx_id
+
+    async def retrieve_from_cold_storage(self, tx_id: str) -> Optional[str]:
+        """Retrieves content from the cold storage provider."""
+        print(f"Bifrost-Bridge: Retrieving data from Arweave TX: {tx_id}...")
+        # Mock retrieval
+        return "Decrypted content retrieved from cold storage."

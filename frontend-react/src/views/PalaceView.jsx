@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Building2, X, Maximize2, Zap, Search, Box } from 'lucide-react';
+import { Building2, X, Maximize2, Zap, Search, Box, RefreshCw } from 'lucide-react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 import { fetchArtifacts } from '../api';
@@ -10,6 +10,13 @@ const MemoryPalace = ({ theme }) => {
   const [artifacts, setArtifacts] = useState([]);
   const [selectedNode, setSelectedNode] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  
+  // --- Phase 3: Temporal Scrubbing State ---
+  const [temporalState, setTemporalState] = useState(100); // 100% = Now
+  const [historicalGraph, setHistoricalGraph] = useState(null);
+  const [activePath, setActivePath] = useState([]); // List of node IDs in the current trace
+  // ------------------------------------------
+
   const colors = getThemeColors(theme);
 
   useEffect(() => {
@@ -21,6 +28,29 @@ const MemoryPalace = ({ theme }) => {
       setIsLoading(false);
     });
   }, []);
+
+  // --- Phase 3: Temporal Scrubbing Logic ---
+  useEffect(() => {
+    if (temporalState === 100) {
+      setHistoricalGraph(null);
+      return;
+    }
+    
+    // Calculate a timestamp based on the percentage
+    // For mock purposes, we'll just subtract days
+    const daysAgo = Math.floor((100 - temporalState) / 2);
+    const date = new Date();
+    date.setDate(date.getDate() - daysAgo);
+    const ts = date.toISOString();
+
+    fetch(`http://localhost:8001/analytics/graph/historical?timestamp=${ts}`, {
+      headers: { 'Authorization': `Bearer ${localStorage.getItem('akasha_token')}` }
+    })
+      .then(res => res.json())
+      .then(setHistoricalGraph)
+      .catch(console.error);
+  }, [temporalState]);
+  // ------------------------------------------
 
   useEffect(() => {
     if (isLoading || artifacts.length === 0) return;
@@ -103,6 +133,35 @@ const MemoryPalace = ({ theme }) => {
     starGeometry.setAttribute('position', new THREE.Float32BufferAttribute(starVertices, 3));
     const stars = new THREE.Points(starGeometry, starMaterial);
     scene.add(stars);
+
+    // --- THOUGHT TRACE (Visualizing reasoning paths) ---
+    const traceGroup = new THREE.Group();
+    if (activePath.length > 1) {
+      const lineMaterial = new THREE.LineBasicMaterial({ color: 0xf59e0b, linewidth: 2, transparent: true, opacity: 0.6 });
+      const points = [];
+      
+      activePath.forEach(nodeId => {
+        const node = nodes.find(n => n.userData.id === nodeId);
+        if (node) points.push(node.position);
+      });
+
+      if (points.length > 1) {
+        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+        const line = new THREE.Line(geometry, lineMaterial);
+        traceGroup.add(line);
+        
+        // Add glow particles along the line
+        points.forEach(p => {
+          const glowGeo = new THREE.SphereGeometry(0.1, 8, 8);
+          const glowMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b });
+          const glow = new THREE.Mesh(glowGeo, glowMat);
+          glow.position.copy(p);
+          traceGroup.add(glow);
+        });
+      }
+    }
+    scene.add(traceGroup);
+    // ----------------------------------------------------
 
     // --- RAYCASTING (Clicking) ---
     const raycaster = new THREE.Raycaster();
@@ -188,6 +247,31 @@ const MemoryPalace = ({ theme }) => {
 
       {/* 3D Mount Point */}
       <div ref={mountRef} className="flex-1 w-full h-full cursor-grab active:cursor-grabbing" />
+
+      {/* Phase 3: Temporal Scrubbing Slider UI */}
+      <div className="absolute bottom-6 left-6 right-6 lg:left-auto lg:right-12 lg:bottom-12 lg:w-72 z-40">
+        <div className="bg-stone-900/80 backdrop-blur-xl border border-stone-800 rounded-3xl p-6 shadow-2xl">
+          <div className="flex justify-between items-center mb-4">
+            <span className="text-[10px] font-bold text-stone-400 uppercase tracking-widest flex items-center gap-2">
+              <RefreshCw className={`w-3 h-3 ${temporalState < 100 ? 'animate-spin' : ''}`} /> Temporal Scrubbing
+            </span>
+            <span className="text-[10px] font-mono text-amber-500 font-bold">{temporalState}%</span>
+          </div>
+          <input 
+            type="range" 
+            min="0" 
+            max="100" 
+            value={temporalState} 
+            onChange={(e) => setTemporalState(parseInt(e.target.value))}
+            className="w-full h-1.5 bg-stone-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
+          />
+          <div className="flex justify-between mt-2">
+            <span className="text-[8px] text-stone-600 font-bold">Genesis</span>
+            <span className="text-[8px] text-stone-600 font-bold">Now</span>
+          </div>
+        </div>
+      </div>
+      {/* -------------------------------------- */}
 
       {/* Selected Node Details */}
       {selectedNode && (

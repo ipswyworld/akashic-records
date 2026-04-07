@@ -54,7 +54,7 @@ async def receive_message(request: WebhookMessage, req: Request):
     if raw_text.lower().startswith("ask:"):
         query = raw_text[4:].strip()
         # Perform Graph-RAG Search and Synthesis
-        # (This simulates the /jarvis/ask flow remotely)
+        # (This simulates the /akasha/ask flow remotely)
         vector_results = ai_engine.search_vectors(query, user_id=request.user_id)
         docs = vector_results.get("documents", [[]])[0]
         synthesis = ai_engine.synthesize_graph_rag(query, docs, [])

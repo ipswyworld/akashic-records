@@ -1,8 +1,11 @@
 import os
+import sys
 import shutil
 from pathlib import Path
 from alembic.config import Config
 from alembic import command
+
+import subprocess
 
 REQUIRED_DIRECTORIES = [
     "akasha_data/system_user",
@@ -12,6 +15,23 @@ REQUIRED_DIRECTORIES = [
     "chroma_db",
     "plugins"
 ]
+
+def install_dependencies(base_path: Path):
+    print("📦 Installing dependencies with uv...")
+    req_path = base_path / "requirements.txt"
+    if req_path.exists():
+        try:
+            if shutil.which("uv"):
+                subprocess.run(["uv", "pip", "install", "-r", str(req_path)], check=True)
+                print("✅ Dependencies installed via uv.")
+            else:
+                print("⚠️  'uv' not found. Falling back to standard pip...")
+                subprocess.run([sys.executable, "-m", "pip", "install", "-r", str(req_path)], check=True)
+                print("✅ Dependencies installed via pip.")
+        except subprocess.CalledProcessError as e:
+            print(f"❌ Dependency installation failed: {e}")
+    else:
+        print("⚠️  requirements.txt not found. Skipping dependency installation.")
 
 def run_migrations():
     print("🔄 Checking for database migrations...")
@@ -28,8 +48,12 @@ def run_migrations():
 def bootstrap_environment():
     print("🚀 Initializing Akasha Environment...")
     
-    # 1. Create missing directories
     base_path = Path(__file__).parent
+    
+    # 0. Install Dependencies
+    install_dependencies(base_path)
+    
+    # 1. Create missing directories
     for dir_path in REQUIRED_DIRECTORIES:
         full_path = base_path / dir_path
         if not full_path.exists():

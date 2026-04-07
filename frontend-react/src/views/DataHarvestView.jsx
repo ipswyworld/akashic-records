@@ -10,7 +10,7 @@ const DataHarvestView = ({ theme, onIngest }) => {
   const colors = getThemeColors(theme);
 
   useEffect(() => {
-    const ws = new WebSocket('ws://localhost:8001/jarvis/sensory');
+    const ws = new WebSocket('ws://localhost:8001/akasha/sensory');
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
       if (data.event === 'INGESTION_PROGRESS') {

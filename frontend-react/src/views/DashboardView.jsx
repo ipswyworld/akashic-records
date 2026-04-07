@@ -1,21 +1,41 @@
 import React, { useState, useMemo, useLayoutEffect, useRef, useEffect } from 'react';
 import { 
-  Zap, Plus, Activity, UploadCloud, Globe, Unlock, Sparkles, TrendingUp, Cpu
+  Zap, Plus, Activity, UploadCloud, Globe, Unlock, Sparkles, TrendingUp, Cpu, Clock
 } from 'lucide-react';
 import gsap from 'gsap';
 import { ingestUrl, fetchEvolutionAnalytics } from '../api';
 import { getThemeColors } from '../components/CommonUI';
 
-const DashboardView = ({ analytics, recentArtifacts, onIngest, theme, setView }) => {
+import DigitalSoul from '../components/DigitalSoul';
+
+const DashboardView = ({ theme, analytics, onIngest, recentArtifacts }) => {
   const [ingestUrlInput, setIngestUrlInput] = useState('');
   const [isIngesting, setIsIngesting] = useState(false);
   const [evolutionData, setEvolutionData] = useState(null);
+  const [morningBriefing, setMorningBriefing] = useState(null);
+  const [psychology, setPsychology] = useState(null);
   const colors = getThemeColors(theme);
   const containerRef = useRef(null);
 
   useEffect(() => {
     fetchEvolutionAnalytics().then(setEvolutionData).catch(console.error);
+    fetch('http://localhost:8001/chronos/morning_briefing', {
+      headers: { 'Authorization': `Bearer ${localStorage.getItem('akasha_token')}` }
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.status === 'SUCCESS') setMorningBriefing(data.report);
+      })
+      .catch(console.error);
+
+    fetch('http://localhost:8001/user/psychology', {
+      headers: { 'Authorization': `Bearer ${localStorage.getItem('akasha_token')}` }
+    })
+      .then(res => res.json())
+      .then(setPsychology)
+      .catch(console.error);
   }, []);
+
 
   useLayoutEffect(() => {
     const ctx = gsap.context(() => {
@@ -39,6 +59,16 @@ const DashboardView = ({ analytics, recentArtifacts, onIngest, theme, setView })
         <div className="relative z-10">
           <h1 className={`text-2xl sm:text-3xl font-light mb-2 ${colors.textMain}`}><span className="text-amber-500 font-semibold tracking-wide">{analytics?.neural_name || 'Archivist'}</span> is Online.</h1>
           <p className={`${colors.textMuted} max-w-xl mb-6 leading-relaxed text-sm sm:text-base`}>System nominal. {analytics?.total_count || 0} neural artifacts indexed. Evolution Status: <span className="text-blue-500 font-mono font-bold">{evolutionData?.evolution_status || 'INITIALIZING'}</span>. Awaiting cognitive input.</p>
+          
+          {morningBriefing && (
+            <div className={`mb-6 p-4 rounded-xl border border-amber-500/30 bg-amber-500/5`}>
+              <h3 className="text-amber-500 text-sm font-bold uppercase tracking-wider mb-2 flex items-center">
+                <Sparkles className="w-4 h-4 mr-2" /> Morning Briefing (Serendipity Report)
+              </h3>
+              <p className={`text-sm ${colors.textMain} leading-relaxed whitespace-pre-wrap`}>{morningBriefing}</p>
+            </div>
+          )}
+
           <div className="flex flex-wrap gap-3 sm:gap-4">
             <button onClick={() => setView('chat')} className="px-4 sm:px-5 py-2.5 bg-amber-500/10 text-amber-600 border border-amber-500/30 rounded-lg hover:bg-amber-500/20 transition-all flex items-center shadow-sm text-sm font-medium"><Zap className="w-4 h-4 mr-2" /> Ask AI</button>
             <button onClick={() => setView('library')} className={`px-4 sm:px-5 py-2.5 rounded-lg border flex items-center text-sm font-medium transition-all ${theme === 'dark' ? 'bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700' : 'bg-white text-stone-700 border-stone-200 hover:bg-stone-50 shadow-sm'}`}><Plus className="w-4 h-4 mr-2" /> Add Record</button>
@@ -127,6 +157,55 @@ const DashboardView = ({ analytics, recentArtifacts, onIngest, theme, setView })
         </div>
 
         <div className="space-y-6">
+          <div className={`dashboard-card p-5 sm:p-6 rounded-2xl ${colors.panel} border ${colors.panelBorder} shadow-sm`}>
+            <h3 className={`text-xs sm:text-sm font-semibold ${colors.textMuted} uppercase tracking-wider mb-6 flex items-center`}>
+              <Clock className="w-4 h-4 mr-2 text-blue-500" /> Temporal Pulse
+            </h3>
+            <div className="space-y-4">
+              <div className="flex justify-between items-end">
+                <div>
+                  <p className={`text-2xl font-mono font-bold ${colors.textMain}`}>
+                    {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </p>
+                  <p className="text-[10px] text-stone-500 uppercase tracking-widest mt-1">Local Neural Time</p>
+                </div>
+                <div className="text-right">
+                  <span className="px-2 py-1 bg-blue-500/10 text-blue-600 rounded text-[8px] font-black uppercase tracking-tighter border border-blue-500/20">
+                    {evolutionData?.circadian_tone || 'Pragmatic'} Mode
+                  </span>
+                </div>
+              </div>
+              <div className="pt-4 border-t border-stone-100 space-y-3">
+                <div className="flex justify-between items-center">
+                  <span className="text-[10px] text-stone-400 font-bold uppercase tracking-widest">Next Dream Cycle</span>
+                  <span className="text-[10px] font-mono text-stone-600">03:00 AM</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-[10px] text-stone-400 font-bold uppercase tracking-widest">Nocturnal Foraging</span>
+                  <span className="text-[10px] font-mono text-green-500">Scheduled</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className={`dashboard-card p-5 sm:p-6 rounded-2xl ${colors.panel} border ${colors.panelBorder} shadow-sm overflow-hidden relative`}>
+            <h3 className={`text-xs sm:text-sm font-semibold ${colors.textMuted} uppercase tracking-wider mb-6 flex items-center`}>
+              <Sparkles className="w-4 h-4 mr-2 text-amber-500" /> Digital Ego
+            </h3>
+            <div className="flex flex-col items-center justify-center py-4">
+              <DigitalSoul 
+                traits={psychology?.ocean_traits} 
+                mood={psychology?.current_mood} 
+                size={160}
+                color={psychology?.current_mood === 'Stressed' ? 'rose' : 'amber'}
+              />
+              <div className="mt-6 text-center">
+                <p className={`text-sm font-bold ${colors.textMain}`}>{psychology?.known_name || 'Anonymous User'}</p>
+                <p className="text-[10px] text-stone-500 uppercase tracking-widest mt-1">Mood: {psychology?.current_mood || 'Neutral'}</p>
+              </div>
+            </div>
+          </div>
+
           <div className={`dashboard-card p-5 sm:p-6 rounded-2xl ${colors.panel} border ${colors.panelBorder} shadow-sm`}>
             <div className="flex justify-between items-center mb-6">
               <h3 className={`text-xs sm:text-sm font-semibold ${colors.textMuted} uppercase tracking-wider`}>System Integrity</h3>

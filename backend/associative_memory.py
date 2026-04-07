@@ -1,7 +1,40 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, Any
+import sqlite3
+import json
+from typing import Dict, Any, List
+
+class TraceLogger:
+    """Logs user interactions with associative memory for future model fine-tuning."""
+    def __init__(self, db_path="akasha.db"):
+        self.db_path = db_path
+        self._init_db()
+
+    def _init_db(self):
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute('''
+                    CREATE TABLE IF NOT EXISTS memory_traces (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        query_text TEXT,
+                        retrieved_ids TEXT,
+                        interaction_score REAL,
+                        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+        except Exception as e:
+            print(f"TraceLogger DB Init Error: {e}")
+
+    def log_interaction(self, query_text: str, retrieved_ids: List[str], score: float):
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute(
+                    "INSERT INTO memory_traces (query_text, retrieved_ids, interaction_score) VALUES (?, ?, ?)",
+                    (query_text, json.dumps(retrieved_ids), score)
+                )
+        except Exception as e:
+            print(f"TraceLogger Log Error: {e}")
 
 class CrossModalAligner(nn.Module):
     """
@@ -49,6 +82,11 @@ class AssociativeMemoryEngine:
     def __init__(self):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.aligner = CrossModalAligner().to(self.device)
+        self.tracer = TraceLogger()
+
+    def log_retrieval_trace(self, query: str, retrieved_ids: List[str], interaction_score: float = 1.0):
+        """Records a successful retrieval hit for future fine-tuning."""
+        self.tracer.log_interaction(query, retrieved_ids, interaction_score)
 
     def get_shared_representation(self, modality: str, embedding: torch.Tensor) -> torch.Tensor:
         self.aligner.eval()

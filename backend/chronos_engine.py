@@ -132,6 +132,18 @@ class ChronosEngine:
             db_session.add(new_artifact)
             db_session.commit()
             
+            # Broadcast completion to UI
+            try:
+                from main import manager
+                import json
+                asyncio.create_task(manager.broadcast(json.dumps({
+                    "event": "NEW_ARTIFACT_INGESTED", 
+                    "id": new_artifact.id, 
+                    "title": new_artifact.title,
+                    "status": "COMPLETED"
+                })))
+            except: pass
+            
             return f"Web Intel Briefing on '{topic}':\n\n{intel_briefing}"
             
         except Exception as e:
@@ -140,7 +152,7 @@ class ChronosEngine:
 
     async def get_daily_summary_plan(self, user_id: str) -> str:
         """
-        Synthesizes the user's goals and calendar into a Jarvis-style morning briefing.
+        Synthesizes the user's goals and calendar into an Akasha-style morning briefing.
         """
         db: Session = SessionLocal()
         try:
@@ -260,40 +272,63 @@ class ChronosEngine:
 
     async def run_nocturnal_consolidation(self, user_id: str):
         """
-        Phase 4: Autonomous Dream Phase.
-        Agents debate distant memories to find lateral analogies and forge new insights.
+        Phase 4: Autonomous Dream Phase & Nocturnal Learning.
+        Agents debate memories AND forage the web for fresh knowledge while the user sleeps.
         """
         db: Session = SessionLocal()
         try:
-            print(f"Chronos: Initiating Nocturnal Dream Phase for {user_id}...")
+            print(f"Chronos: Initiating Nocturnal Cycle for {user_id}...")
             
-            # 1. Select two seemingly unrelated recent artifacts
+            eureka = "No specific dream connections made."
+            research_report = "No new research conducted."
+            
+            # 1. DREAM PHASE: Agentic Debate
             artifacts = db.query(LibraryArtifact).filter(LibraryArtifact.user_id == user_id).order_by(func.random()).limit(2).all()
-            if len(artifacts) < 2: return
+            if len(artifacts) >= 2:
+                print(f"Chronos: Synthesizing lateral connections...")
+                debate_topic = f"Find a hidden connection between: {artifacts[0].title} and {artifacts[1].title}"
+                loop = asyncio.get_event_loop()
+                eureka = await loop.run_in_executor(None, self.ai.council.debate_council.run_debate, debate_topic)
+                from main import ingest_library_artifact
+                await ingest_library_artifact(f"Eureka: {artifacts[0].title} × {artifacts[1].title}", eureka, "memory", {"source": "dream_phase"}, db, user_id)
+
+            # 2. LEARNING PHASE: Autonomous Foraging
+            # Determine most active recent theme
+            recent = db.query(LibraryArtifact).filter(LibraryArtifact.user_id == user_id).order_by(LibraryArtifact.timestamp.desc()).limit(10).all()
+            themes = " ".join([a.title for a in recent])
+            forage_prompt = f"Based on these recent interests: {themes}, identify one advanced research topic to forage from the web. Return ONLY the topic."
+            target_topic = self.ai.council.llm.invoke(forage_prompt).strip()
             
-            mem_a = artifacts[0].content
-            mem_b = artifacts[1].content
+            if target_topic and len(target_topic) > 3:
+                print(f"Chronos: Autonomously foraging the web for '{target_topic}'...")
+                from main import IngestEngine
+                ingest_eng = IngestEngine()
+                loop = asyncio.get_event_loop()
+                research_report = await loop.run_in_executor(None, self.ai.council.scout.deep_research, target_topic, ingest_eng)
+                from main import ingest_library_artifact
+                await ingest_library_artifact(f"Nocturnal Learning: {target_topic}", research_report, "research_report", {"source": "nocturnal_forage", "topic": target_topic}, db, user_id)
+
+            # --- Feature 7: Serendipity Report ---
+            print(f"Chronos: Generating Serendipity Report...")
+            report_prompt = f"Based on the nocturnal dream phase ({eureka}) and learning phase ({research_report}), generate a 'Morning Briefing' for the user. It should be concise, insightful, and highlight the serendipitous connections found while they slept. Format nicely."
+            serendipity_report = self.ai.council.llm.invoke(report_prompt).strip()
             
-            # 2. Trigger Agentic Debate
-            print(f"Chronos: Agents are debating connections between '{artifacts[0].title}' and '{artifacts[1].title}'...")
-            debate_topic = f"Find a deep structural analogy or hidden connection between these two artifacts:\n1. {mem_a[:1000]}\n2. {mem_b[:1000]}"
-            loop = asyncio.get_event_loop()
-            eureka_insight = await loop.run_in_executor(None, self.ai.council.debate_council.run_debate, debate_topic)
-            
-            # 3. Save the 'Eureka' moment as a new artifact
             from main import ingest_library_artifact
             await ingest_library_artifact(
-                title=f"Eureka: {artifacts[0].title} × {artifacts[1].title}",
-                content=eureka_insight,
-                artifact_type="memory",
-                extra_meta={"source": "nocturnal_consolidation", "parent_ids": [artifacts[0].id, artifacts[1].id]},
+                title=f"Morning Briefing: {datetime.utcnow().strftime('%Y-%m-%d')}",
+                content=serendipity_report,
+                artifact_type="serendipity_report",
+                extra_meta={"source": "nocturnal_consolidation"},
                 db=db,
                 user_id=user_id
             )
-            print(f"Chronos: Dream Phase complete. New insight vaulted.")
+            print(f"Chronos: Serendipity Report generated and saved.")
+            # ---------------------------------------
+
+            print(f"Chronos: Nocturnal Cycle complete.")
             
         except Exception as e:
-            print(f"Chronos: Dream Phase failed: {e}")
+            print(f"Chronos: Nocturnal Cycle failed: {e}")
         finally:
             db.close()
 
@@ -356,6 +391,18 @@ class ChronosEngine:
             )
             db.add(new_insight)
             
+            # Broadcast completion to UI
+            try:
+                from main import manager
+                import json
+                asyncio.create_task(manager.broadcast(json.dumps({
+                    "event": "NEW_ARTIFACT_INGESTED", 
+                    "id": new_insight.id, 
+                    "title": new_insight.title,
+                    "status": "COMPLETED"
+                })))
+            except: pass
+
             # 5. Update UserPsychology based on this new insight
             # This triggers a more profound update than just simple artifact ingestion
             await self.ai.refine_psychology_from_behavior(user_id, behavioral_insight, db)

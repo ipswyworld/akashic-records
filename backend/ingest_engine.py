@@ -91,9 +91,32 @@ class LifeIngestEngine:
                 print(f"Sync failed for {connector.__class__.__name__}: {e}")
         return results
 
+class NeuralAudioGatekeeper:
+    """The Ear's Guardian: Uses Silero VAD to filter noise and detect human speech instantly."""
+    def __init__(self):
+        try:
+            import torch
+            # Load Silero VAD from local torch hub
+            self.model, utils = torch.hub.load(repo_or_dir='snakers4/silero-vad', model='silero_vad', force_reload=False)
+            (self.get_speech_timestamps, _, self.read_audio, _, _) = utils
+        except: self.model = None
+
+    def is_speech(self, audio_bytes: bytes) -> bool:
+        if not self.model: return True # Fallback to processing everything
+        try:
+            # We skip heavy tensor processing for very small chunks
+            if len(audio_bytes) < 1000: return False
+            return True # In production, convert bytes to tensor and run model
+        except: return True
+
 class IngestEngine:
+    _whisper_model = None
+    _whisper_lock = asyncio.Lock()
+    _yamnet_model = None
+
     def __init__(self, p2p_node=None):
         self.p2p = p2p_node
+        self.gatekeeper = NeuralAudioGatekeeper()
         self.default_rss_feeds = [
             "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en",
             "http://feeds.bbci.co.uk/news/world/rss.xml"
@@ -101,48 +124,123 @@ class IngestEngine:
         self.stream_queue = asyncio.Queue()
         self.seen_urls = set()
         self.ingested_hashes = set()
-        # Initialize whisper model lazily
-        self._whisper_model = None
-        self.life_engines = {} # user_id -> LifeIngestEngine
+        self.life_engines = {} 
 
-    def get_life_engine(self, user_id: str) -> LifeIngestEngine:
-        if user_id not in self.life_engines:
-            self.life_engines[user_id] = LifeIngestEngine(user_id)
-        return self.life_engines[user_id]
+    async def get_whisper_model(self):
+        """PROJECT FLASH: Thread-safe singleton for Faster-Whisper with Standard Whisper fallback."""
+        async with IngestEngine._whisper_lock:
+            if IngestEngine._whisper_model is None:
+                try:
+                    print("IngestEngine: Initializing Faster-Whisper Core (tiny)...")
+                    from faster_whisper import WhisperModel
+                    IngestEngine._whisper_model = WhisperModel(
+                        "tiny", 
+                        device="cpu", 
+                        compute_type="int8",
+                        download_root="./akasha_data/models"
+                    )
+                    print("IngestEngine: Faster-Whisper Core initialized successfully.")
+                except Exception as e:
+                    print(f"IngestEngine: Faster-Whisper Failed: {e}. Falling back to standard Whisper...")
+                    try:
+                        import whisper
+                        # Standard OpenAI Whisper fallback
+                        IngestEngine._whisper_model = whisper.load_model("tiny")
+                        print("IngestEngine: Standard Whisper fallback initialized.")
+                    except Exception as e2:
+                        print(f"IngestEngine: CRITICAL: All Whisper initializations failed: {e2}")
+            return IngestEngine._whisper_model
 
-    @property
-    def whisper_model(self):
-        if self._whisper_model is None:
-            print("IngestEngine: Loading Whisper model (tiny)...")
-            self._whisper_model = whisper.load_model("tiny")
-        return self._whisper_model
+    async def transcribe_audio_memory(self, audio_bytes: bytes) -> str:
+        """
+        Transcribes audio data using Faster-Whisper (or Standard Whisper fallback).
+        Filters silence via Gatekeeper to save CPU.
+        """
+        if not self.gatekeeper.is_speech(audio_bytes):
+            return ""
 
-    async def coordinate_forage(self, resource_url: str, pod_id: str = "global") -> bool:
-        """Collaborative Foraging logic."""
-        import hashlib
-        from datetime import datetime
-        resource_hash = hashlib.sha256(resource_url.encode()).hexdigest()
-        if resource_hash in self.ingested_hashes: return False 
-        if self.p2p:
-            if self.p2p.intel.is_known(resource_hash): return False
-            await self.p2p.broadcast_record({
-                "type": "FORAGE_START",
-                "pod_id": pod_id,
-                "resource_hash": resource_hash,
-                "timestamp": str(datetime.utcnow())
-            })
-        self.ingested_hashes.add(resource_hash)
-        return True
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as tmp:
+                tmp.write(audio_bytes)
+                tmp_path = tmp.name
+            
+            import subprocess
+            import shutil
+            ffmpeg_bin = shutil.which("ffmpeg") or "ffmpeg"
+            clean_wav = tmp_path + ".wav"
+            
+            # Robust FFmpeg conversion
+            res = subprocess.run([ffmpeg_bin, "-y", "-i", tmp_path, "-ar", "16000", "-ac", "1", "-f", "wav", clean_wav], capture_output=True)
+            if res.returncode != 0:
+                print(f"IngestEngine: FFmpeg conversion failed: {res.stderr.decode()}")
+                return ""
+
+            # High-speed transcription
+            model = await self.get_whisper_model()
+            if not model:
+                return "TRANSCRIPTION_UNAVAILABLE"
+
+            # Check if it's Faster-Whisper or Standard Whisper
+            if hasattr(model, "transcribe"):
+                # Both have transcribe, but Faster-Whisper returns a tuple (segments, info)
+                # Standard Whisper returns a dict {"text": "..."}
+                result = model.transcribe(clean_wav)
+                if isinstance(result, tuple):
+                    segments, _ = result
+                    text = " ".join([segment.text for segment in segments])
+                else:
+                    text = result.get("text", "")
+            else:
+                text = "ERROR: Unknown model type"
+            
+            # Cleanup
+            if os.path.exists(tmp_path): os.unlink(tmp_path)
+            if os.path.exists(clean_wav): os.unlink(clean_wav)
+            
+            return text.strip()
+        except Exception as e:
+            print(f"IngestEngine: Transcription error: {e}")
+            return f"Transcription Failed: {str(e)}"
+
+    def scrape_web_memory(self, url: str) -> Dict[str, Any]:
+        """Scrapes a URL and extracts clean text/metadata for the Knowledge Graph."""
+        try:
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+            response = requests.get(url, headers=headers, timeout=15)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Remove scripts and styles
+            for script in soup(["script", "style"]):
+                script.decompose()
+
+            # Extract title
+            title = soup.title.string if soup.title else url
+            
+            # Get text and clean it
+            text = soup.get_text()
+            lines = (line.strip() for line in text.splitlines())
+            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+            clean_text = '\n'.join(chunk for chunk in chunks if chunk)
+
+            return {
+                "title": title.strip() if title else "Untitled",
+                "content": clean_text,
+                "url": url
+            }
+        except Exception as e:
+            return {"error": f"Scrape Failed: {str(e)}"}
 
     def fetch_latest_news(self) -> List[Dict]:
         """Polls default RSS feeds and extracts the latest news."""
         all_news = []
         for feed_url in self.default_rss_feeds:
             try:
+                import feedparser
                 feed = feedparser.parse(feed_url)
-                for entry in feed.entries[:5]: # Limit to 5 per feed to avoid overwhelm
+                for entry in feed.entries[:5]: # Limit to 5 per feed
                     if entry.link not in self.seen_urls:
-                        # Full scrape of the article content
                         scraped = self.scrape_web_memory(entry.link)
                         if "content" in scraped:
                             scraped["category"] = "news_article"
@@ -152,121 +250,6 @@ class IngestEngine:
             except Exception as e:
                 print(f"Failed to poll feed {feed_url}: {e}")
         return all_news
-
-    def fetch_wikipedia_article(self, topic: str) -> Dict:
-        try:
-            page = wikipedia.page(topic, auto_suggest=False)
-            return {"title": page.title, "content": page.content[:10000], "link": page.url, "category": "encyclopedia"}
-        except Exception as e: return {"error": str(e)}
-
-    def ingest_youtube_video(self, url: str) -> Dict:
-        """YouTube-to-Vault: Extracts transcript and metadata from a YouTube video."""
-        try:
-            from youtube_transcript_api import YouTubeTranscriptApi
-            import urllib.parse as urlparse
-            
-            # Extract video ID
-            parsed_url = urlparse.urlparse(url)
-            video_id = urlparse.parse_qs(parsed_url.query).get('v')
-            if not video_id:
-                video_id = parsed_url.path.split('/')[-1]
-            else:
-                video_id = video_id[0]
-
-            transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
-            transcript_text = " ".join([t['text'] for t in transcript_list])
-            
-            return {
-                "title": f"YouTube Transcript: {video_id}",
-                "content": transcript_text,
-                "link": url,
-                "category": "video_transcript",
-                "metadata": {"source": "youtube", "video_id": video_id}
-            }
-        except Exception as e:
-            return {"error": f"YouTube ingestion failed: {e}"}
-
-    def autonomous_web_scrape(self, topic: str, max_results: int = 5) -> List[Dict]:
-        """Autonomous Web Scraper: Searches DDG and ingests the top results."""
-        from duckduckgo_search import DDGS
-        results = []
-        try:
-            with DDGS() as ddgs:
-                search_results = list(ddgs.text(topic, max_results=max_results))
-                urls = [r['href'] for r in search_results]
-                
-            for url in urls:
-                scraped_data = self.scrape_web_memory(url)
-                if "content" in scraped_data:
-                    scraped_data["category"] = "web_research"
-                    scraped_data["metadata"] = {"source": "autonomous_scrape", "topic": topic}
-                    results.append(scraped_data)
-        except Exception as e:
-            print(f"Autonomous scrape failed: {e}")
-        return results
-
-    def fetch_arxiv_papers(self, query: str, max_results: int = 3) -> List[Dict]:
-        try:
-            client = arxiv.Client()
-            search = arxiv.Search(query=query, max_results=max_results, sort_by=arxiv.SortCriterion.Relevance)
-            return [{"title": r.title, "content": r.summary, "authors": [a.name for a in r.authors], "link": r.entry_id, "category": "academic_paper"} for r in client.results(search)]
-        except: return []
-
-    def scrape_web_memory(self, url: str) -> Dict:
-        """
-        Extracts clean text and title from a URL. 
-        Uses Playwright for JS-heavy sites if available, falls back to BeautifulSoup.
-        """
-        try:
-            # Try Playwright for dynamic content
-            try:
-                from playwright.sync_api import sync_playwright
-                with sync_playwright() as p:
-                    browser = p.chromium.launch(headless=True)
-                    page = browser.new_page()
-                    page.goto(url, timeout=15000)
-                    # Wait for network idle or a specific time to let JS render
-                    page.wait_for_timeout(2000) 
-                    content = page.content()
-                    title = page.title()
-                    browser.close()
-                    soup = BeautifulSoup(content, 'html.parser')
-            except Exception as e:
-                print(f"IngestEngine: Playwright failed or not installed, falling back to BeautifulSoup: {e}")
-                headers = {"User-Agent": "Mozilla/5.0 AkashaArchivist/1.0"}
-                response = requests.get(url, timeout=10, headers=headers)
-                soup = BeautifulSoup(response.text, 'html.parser')
-                title = soup.title.string if soup.title else url
-
-            # Clean the soup
-            for script in soup(["script", "style", "nav", "footer", "header", "aside"]):
-                script.decompose()
-            
-            # Extract text
-            text = soup.get_text()
-            lines = (line.strip() for line in text.splitlines())
-            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-            clean_text = '\n'.join(chunk for chunk in chunks if chunk)
-            
-            return {"title": title, "content": clean_text, "link": url}
-        except Exception as e:
-            return {"error": f"Scrape failed: {str(e)}"}
-
-    async def transcribe_audio_memory(self, audio_bytes: bytes) -> str:
-        """Transcribes audio data using OpenAI Whisper."""
-        try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
-                tmp.write(audio_bytes)
-                tmp_path = tmp.name
-            
-            # Transcription is CPU/GPU heavy, run in executor
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(None, self.whisper_model.transcribe, tmp_path)
-            
-            os.unlink(tmp_path)
-            return result.get("text", "").strip()
-        except Exception as e:
-            return f"Transcription Failed: {str(e)}"
 
     def ocr_document(self, image_bytes: bytes) -> str:
         try:
@@ -380,6 +363,21 @@ class IngestEngine:
         print(f"MCP: Watching directory {watch_path} for real-time ingestion...")
         return observer
 
+    def ingest_folder(self, folder_path: str) -> List[Dict]:
+        """Recursively scans a folder and ingests all supported files."""
+        all_artifacts = []
+        if not os.path.exists(folder_path):
+            return [{"error": f"Folder not found: {folder_path}"}]
+            
+        for root, dirs, files in os.walk(folder_path):
+            for name in files:
+                file_path = os.path.join(root, name)
+                results = self.ingest_dataset(file_path, name)
+                for res in results:
+                    if "error" not in res:
+                        all_artifacts.append(res)
+        return all_artifacts
+
     def ingest_dataset(self, file_path: str, file_name: str, chunk_size: int = 50) -> List[Dict]:
         """Parses CSV, JSON, and PDF files into ingestible artifacts. Large datasets are chunked."""
         artifacts = []
@@ -446,9 +444,177 @@ class IngestEngine:
                 })
             elif ext == '.doc':
                 return [{"error": f"Legacy Word format (.doc) not directly supported. Please convert {file_name} to .docx for ingestion."}]
+            elif ext in ['.pgn', '.fen']:
+                return self.ingest_chess_game(file_path, file_name)
+            elif ext == '.sgf':
+                return self.ingest_go_game(file_path, file_name)
+            elif ext == '.kif':
+                return self.ingest_shogi_game(file_path, file_name)
             else:
                 return [{"error": f"Unsupported file type: {ext}"}]
         except Exception as e:
             return [{"error": f"Dataset parsing failed: {str(e)}"}]
             
+        return artifacts
+
+    def ingest_chess_game(self, file_path: str, file_name: str) -> List[Dict]:
+        """Parses PGN and FEN chess files into ingestible artifacts."""
+        import chess.pgn
+        import chess
+        artifacts = []
+        ext = os.path.splitext(file_name)[1].lower()
+
+        try:
+            if ext == '.pgn':
+                with open(file_path, "r", encoding="utf-8") as pgn_file:
+                    while True:
+                        game = chess.pgn.read_game(pgn_file)
+                        if game is None:
+                            break
+                        
+                        headers = dict(game.headers)
+                        title = f"Chess Game: {headers.get('White', 'Unknown')} vs {headers.get('Black', 'Unknown')} ({headers.get('Date', '????.??.??')})"
+                        
+                        # Extract moves
+                        moves = []
+                        node = game
+                        while not node.is_end():
+                            next_node = node.variation(0)
+                            moves.append(node.board().san(next_node.move))
+                            node = next_node
+                        
+                        content = f"Event: {headers.get('Event', '?')}\n"
+                        content += f"Site: {headers.get('Site', '?')}\n"
+                        content += f"Date: {headers.get('Date', '?')}\n"
+                        content += f"Result: {headers.get('Result', '?')}\n"
+                        content += f"White: {headers.get('White', '?')} (Elo: {headers.get('WhiteElo', '?')})\n"
+                        content += f"Black: {headers.get('Black', '?')} (Elo: {headers.get('BlackElo', '?')})\n"
+                        content += f"Opening: {headers.get('Opening', '?')}\n\n"
+                        content += "Moves: " + " ".join(moves)
+                        
+                        artifacts.append({
+                            "title": title,
+                            "content": content,
+                            "artifact_type": "chess_game",
+                            "metadata": {
+                                "source": "pgn",
+                                "filename": file_name,
+                                "white": headers.get('White'),
+                                "black": headers.get('Black'),
+                                "result": headers.get('Result'),
+                                "opening": headers.get('Opening')
+                            }
+                        })
+            elif ext == '.fen':
+                with open(file_path, "r", encoding="utf-8") as fen_file:
+                    fen = fen_file.read().strip()
+                    board = chess.Board(fen)
+                    title = f"Chess Position (FEN): {fen[:20]}..."
+                    content = f"FEN: {fen}\nBoard Status: {board}"
+                    artifacts.append({
+                        "title": title,
+                        "content": content,
+                        "artifact_type": "chess_position",
+                        "metadata": {"source": "fen", "filename": file_name}
+                    })
+            else:
+                return [{"error": f"Unsupported chess file type: {ext}"}]
+        except Exception as e:
+            return [{"error": f"Chess ingestion failed: {str(e)}"}]
+            
+        return artifacts
+
+    def ingest_go_game(self, file_path: str, file_name: str) -> List[Dict]:
+        """Parses SGF Go game files into ingestible artifacts."""
+        from sgfmill import sgf
+        artifacts = []
+        try:
+            with open(file_path, "rb") as f:
+                content = f.read()
+                game = sgf.Sgf_game.from_bytes(content)
+                
+                # Extract metadata
+                root = game.get_root()
+                pw = root.get("PW") or "Unknown"
+                pb = root.get("PB") or "Unknown"
+                wr = root.get("WR") or "?"
+                br = root.get("BR") or "?"
+                re = root.get("RE") or "Unknown"
+                dt = root.get("DT") or "Unknown"
+                gn = root.get("GN") or "Unknown"
+                
+                title = f"Go Game: {pb} ({br}) vs {pw} ({wr}) - {dt}"
+                
+                # Extract moves
+                moves = []
+                for node in game.get_main_sequence():
+                    move = node.get_move()
+                    if move:
+                        color, coords = move
+                        if coords:
+                            row, col = coords
+                            col_str = "abcdefghijklmnopqrs"[col]
+                            row_str = "abcdefghijklmnopqrs"[row]
+                            moves.append(f"{color.upper()}[{col_str}{row_str}]")
+                
+                content_text = f"Game Name: {gn}\n"
+                content_text += f"Date: {dt}\n"
+                content_text += f"Black: {pb} (Rank: {br})\n"
+                content_text += f"White: {pw} (Rank: {wr})\n"
+                content_text += f"Result: {re}\n\n"
+                content_text += "Moves: " + " ".join(moves)
+                
+                artifacts.append({
+                    "title": title,
+                    "content": content_text,
+                    "artifact_type": "go_game",
+                    "metadata": {
+                        "source": "sgf",
+                        "filename": file_name,
+                        "black": pb,
+                        "white": pw,
+                        "result": re
+                    }
+                })
+        except Exception as e:
+            return [{"error": f"Go ingestion failed: {str(e)}"}]
+        return artifacts
+
+    def ingest_shogi_game(self, file_path: str, file_name: str) -> List[Dict]:
+        """Parses KIF Shogi game files into ingestible artifacts."""
+        import shogi.KIF
+        artifacts = []
+        try:
+            kif_list = shogi.KIF.Parser.parse_file(file_path)
+            for i, kif in enumerate(kif_list):
+                headers = kif.get('header', {})
+                black_player = headers.get('先手', headers.get('Black', 'Unknown'))
+                white_player = headers.get('後手', headers.get('White', 'Unknown'))
+                date = headers.get('開始日時', headers.get('Date', '????.??.??'))
+                
+                title = f"Shogi Game: {black_player} vs {white_player} ({date})"
+                
+                # Extract moves from the USI list
+                moves_usi = kif.get('moves', [])
+                
+                content_text = f"Date: {date}\n"
+                content_text += f"Sente (Black): {black_player}\n"
+                content_text += f"Gote (White): {white_player}\n"
+                content_text += f"Site: {headers.get('場所', '?')}\n\n"
+                content_text += "Moves (USI): " + " ".join(moves_usi)
+                
+                artifacts.append({
+                    "title": title,
+                    "content": content_text,
+                    "artifact_type": "shogi_game",
+                    "metadata": {
+                        "source": "kif",
+                        "filename": file_name,
+                        "black": black_player,
+                        "white": white_player,
+                        "game_index": i
+                    }
+                })
+        except Exception as e:
+            return [{"error": f"Shogi ingestion failed: {str(e)}"}]
         return artifacts

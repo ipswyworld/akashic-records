@@ -17,10 +17,11 @@ class ContextFabric:
 
     def weave_context(self, query: str, user_id: str, db: Session) -> Dict[str, Any]:
         """
-        Retrieves a 3-dimensional context for any given query.
+        Retrieves a 4-dimensional context for any given query.
         1. Semantic: Top-N similar chunks from ChromaDB.
         2. Relational: Knowledge Graph triplets.
         3. Identity: The user's current Digital Ego state.
+        4. Environmental: Physical location and network context.
         """
         logger.info(f"ContextFabric: Weaving context for user {user_id}...")
         
@@ -36,11 +37,18 @@ class ContextFabric:
         ego = db.query(UserPsychology).filter(UserPsychology.user_id == user_id).first()
         ego_summary = f"Mood: {ego.current_mood}, Values: {ego.core_values}" if ego else "Neutral Baseline"
 
+        # 4. Environmental Dimension (Phase 1 Expansion)
+        from env_sensor import EnvironmentalSensor
+        sensor = EnvironmentalSensor()
+        env = sensor.detect_all()
+        env_summary = f"Location: {env['location']['city']}, SSID: {env['ssid'] or 'Ethernet'}"
+
         return {
             "semantic": docs,
             "relational": graph_context,
             "identity": ego_summary,
-            "full_text": "\n---\n".join(docs + graph_context)
+            "environmental": env_summary,
+            "full_text": "\n---\n".join(docs + graph_context + [env_summary])
         }
 
     def get_artifact_fabric(self, artifact_id: str, db: Session) -> Dict[str, Any]:

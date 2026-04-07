@@ -42,13 +42,18 @@ class SensoryIngestEngine:
                 # 2. Analyze Emotional Tone (Emotional Osmosis)
                 tone = self.multimodal.analyze_tone(audio_chunk)
                 
-                # 3. Trigger Proactive Response if 'URGENT'
-                if tone["primary_emotion"] == "URGENT":
-                    logger.warning("Sensory: URGENT tone detected. Flagging for Head Archivist.")
+                # --- Phase 3: Affective Analysis ---
+                affect = self.multimodal.analyze_affect(audio_chunk)
+                # ----------------------------------
+                
+                # 3. Trigger Proactive Response if 'URGENT' or high stress
+                if tone["primary_emotion"] == "URGENT" or affect["stress"] > 0.8:
+                    logger.warning("Sensory: High Stress or URGENT tone detected. Flagging for Head Archivist.")
                 
                 return {
                     "text": text,
                     "tone": tone,
+                    "affect": affect,
                     "timestamp": str(datetime.utcnow())
                 }
             return None

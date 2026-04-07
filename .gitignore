@@ -11,3 +11,10 @@ venv/
 dist/
 build/
 .pytest_cache/
+*.gguf
+akasha_data/models/
+akasha_data/redundancy/
+akasha_data/sovereign_vault/
+akasha_data/system_user/
+akasha_data/watch/
+backend/akasha_data/

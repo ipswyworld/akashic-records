@@ -32,19 +32,19 @@ def poll_rss_task():
     """Fetches RSS feeds and triggers ingest tasks for new entries."""
     print(f"[{datetime.utcnow()}] Polling RSS Feeds...")
     from ingest_engine import IngestEngine
-    engine = IngestEngine()
-    
+    ingest_engine = IngestEngine()
+
     # We can fetch goals from the DB directly here if needed
     try:
-        memories = engine.fetch_latest_news()
+        memories = ingest_engine.fetch_latest_news()
         for memory in memories:
-            # Enqueue the individual ingestion task
-            ingest_memory_task.delay(memory)
+            # Trigger ingestion task for each news item
+            heavy_ingest_task.delay(memory)
     except Exception as e:
-        print(f"Error polling RSS: {e}")
+        print(f"RSS Polling Error: {e}")
 
 @celery_app.task
-def ingest_memory_task(memory: dict):
+def heavy_ingest_task(memory: dict):
     """Background task to ingest a memory using the heavy Akasha ingestion pipeline."""
     print(f"Ingesting memory: {memory['title']}")
     # We would run the async ingest_library_artifact here via an event loop, 

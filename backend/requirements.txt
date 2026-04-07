@@ -38,8 +38,17 @@ pandas
 python-docx
 openpyxl
 watchdog
+python-chess
+stockfish
+sgfmill
+python-shogi
 
 # Lightweight Data
 numpy
 pyttsx3
 youtube-transcript-api
+faster-whisper
+silero-vad
+tensorflow
+tensorflow-hub
+librosa

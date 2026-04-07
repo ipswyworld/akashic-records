@@ -58,8 +58,8 @@ class GraphEngine:
                     MERGE (s:Concept {{name: $subj, user_id: $user_id}})
                     MERGE (o:Concept {{name: $obj, user_id: $user_id}})
                     MERGE (s)-[r:{pred} {{user_id: $user_id}}]->(o)
-                    ON CREATE SET r.weight = 1.0
-                    ON MATCH SET r.weight = coalesce(r.weight, 1.0) + 0.1
+                    ON CREATE SET r.weight = 1.0, r.timestamp = datetime()
+                    ON MATCH SET r.weight = coalesce(r.weight, 1.0) + 0.1, r.timestamp = datetime()
                     WITH s, o, r
                     MATCH (a:Artifact {{id: $artifact_id, user_id: $user_id}})
                     MERGE (a)-[:MENTIONS {{user_id: $user_id}}]->(s)
@@ -68,6 +68,42 @@ class GraphEngine:
                     session.execute_write(lambda tx: tx.run(query, subj=subj, obj=obj, artifact_id=artifact_id, user_id=user_id))
         except Exception as e:
             print(f"GraphEngine Error: {e}")
+
+    def get_historical_topology(self, user_id: str, timestamp: str, limit: int = 100) -> Dict:
+        """
+        Phase 3: Temporal Scrubbing.
+        Returns the graph state as it existed at a specific point in time.
+        """
+        if not self.is_active: return {"nodes": [], "links": []}
+        try:
+            with self.driver.session() as session:
+                query = """
+                MATCH (n:Concept {user_id: $user_id})-[r]->(m:Concept {user_id: $user_id})
+                WHERE type(r) <> 'MENTIONS' AND r.timestamp <= datetime($timestamp)
+                RETURN n.name as source, m.name as target, type(r) as type, r.weight as weight
+                ORDER BY r.timestamp DESC LIMIT $limit
+                """
+                result = session.run(query, user_id=user_id, timestamp=timestamp, limit=limit)
+                
+                nodes = set()
+                links = []
+                for record in result:
+                    nodes.add(record["source"])
+                    nodes.add(record["target"])
+                    links.append({
+                        "source": record["source"],
+                        "target": record["target"],
+                        "label": record["type"],
+                        "weight": record["weight"]
+                    })
+                
+                return {
+                    "nodes": [{"id": name, "name": name, "val": 1} for name in nodes],
+                    "links": links
+                }
+        except Exception as e:
+            print(f"GraphEngine Historical Error: {e}")
+            return {"nodes": [], "links": []}
 
     def decay_synaptic_weights(self, decay_factor: float = 0.95, user_id: str = None):
         """Applies metabolic decay to all graph relationships."""

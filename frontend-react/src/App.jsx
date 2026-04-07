@@ -4,12 +4,32 @@ import {
   Bell, Mic, LayoutDashboard, Library, Network, Globe, Hammer,
   MessageSquare, Building2, Sun, Moon, PanelLeftClose, 
   PanelLeftOpen, Settings, Zap, Sparkles, BrainCircuit,
-  Command, Search, Plus, Activity, Unlock, X, Check, AlertCircle, Paperclip, Send
+  Command, Search, Plus, Activity, Unlock, X, Check, AlertCircle, Paperclip, Send,
+  Book, Landmark, Clock, GraduationCap
 } from 'lucide-react';
+
+const NeuralClock = () => {
+  const [time, setTime] = React.useState(new Date());
+  React.useEffect(() => {
+    const timer = setInterval(() => setTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  
+  return (
+    <div className="flex flex-col items-end">
+      <div className="text-xs font-mono font-bold text-amber-500 tracking-wider">
+        {time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+      </div>
+      <div className="text-[8px] font-black text-stone-500 uppercase tracking-[0.2em]">
+        {time.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}
+      </div>
+    </div>
+  );
+};
 import gsap from 'gsap';
 
 import { getThemeColors, Toast } from './components/CommonUI';
-import { useAnalytics, useArtifacts, usePsychology, useUpdateSettings } from './hooks/useAkasha';
+import { useAnalytics, useArtifacts, usePsychology, useUpdateSettings, useSettings } from './hooks/useAkasha';
 
 // Modular Views
 import DashboardView from './views/DashboardView';
@@ -24,7 +44,11 @@ import GraphView from './views/GraphView';
 import NetworkView from './views/NetworkView';
 import ForgeView from './views/ForgeView';
 import AuthView from './views/AuthView';
+import DigitalLibrary from './views/DigitalLibrary';
+import TutorView from './views/TutorView';
 import ArcReactor from './components/ArcReactor';
+import Orb from './components/Orb';
+import { useVoice } from './hooks/useVoice';
 import { logout } from './api';
 
 class ErrorBoundary extends React.Component {
@@ -50,7 +74,23 @@ function AkashaOSContent() {
   const [isSidebarOpen, setSidebarOpen] = useState(true);
   const [theme, setTheme] = useState('dark');
   const [toasts, setToasts] = useState([]);
-  const [isListening, setIsListening] = useState(false);
+  const { 
+    isListening, 
+    isPlaying, 
+    startListening, 
+    stopListening, 
+    enqueueAudio, 
+    stopAudio, 
+    analyser 
+  } = useVoice(
+    (transcript) => {
+      if (socketRef.current?.readyState === WebSocket.OPEN) {
+        socketRef.current.send(JSON.stringify({ type: 'TRANSCRIPT', payload: transcript }));
+      }
+    },
+    (err) => setToasts(prev => [{ id: Date.now(), type: 'system', message: err }, ...prev])
+  );
+
   const [activeIntent, setActiveIntent] = useState(null);
   const [isActionActive, setIsActionActive] = useState(false);
   const [messages, setMessages] = useState([]);
@@ -63,48 +103,11 @@ function AkashaOSContent() {
   const { data: analytics, refetch: refetchAnalytics } = useAnalytics();
   const { data: artifacts, refetch: refetchArtifacts } = useArtifacts();
   const { data: psychology } = usePsychology();
+  const { data: userSettings } = useSettings();
   const updateSettingsMutation = useUpdateSettings();
 
   const userName = psychology?.known_name || 'User';
   const userInitials = userName.substring(0, 2).toUpperCase();
-  const userSettings = psychology?.status !== "NO_PROFILE" ? psychology : null;
-
-  useEffect(() => {
-    if (!isAuthenticated) return;
-    
-    let mediaRecorder;
-    let stream;
-
-    const startRecording = async () => {
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-        
-        mediaRecorder.ondataavailable = (event) => {
-          if (event.data.size > 0 && socketRef.current?.readyState === WebSocket.OPEN) {
-            socketRef.current.send(event.data);
-          }
-        };
-
-        mediaRecorder.start(1000); 
-      } catch (err) {
-        console.error("Microphone Access Error:", err);
-        setIsListening(false);
-      }
-    };
-
-    if (isListening) {
-      startRecording();
-    } else {
-      if (mediaRecorder) mediaRecorder.stop();
-      if (stream) stream.getTracks().forEach(track => track.stop());
-    }
-
-    return () => {
-      if (mediaRecorder) mediaRecorder.stop();
-      if (stream) stream.getTracks().forEach(track => track.stop());
-    };
-  }, [isListening, isAuthenticated]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -134,7 +137,7 @@ function AkashaOSContent() {
     const connectSocket = () => {
       try {
         const token = localStorage.getItem('akasha_token');
-        const socket = new WebSocket(`ws://localhost:8001/jarvis/sensory?token=${token}`);
+        const socket = new WebSocket(`ws://localhost:8001/akasha/sensory?token=${token}`);
         socketRef.current = socket;
         socket.onmessage = (event) => {
           try {
@@ -148,10 +151,22 @@ function AkashaOSContent() {
               if (data.intent === 'SYSTEM_COMMAND') setCurrentView('butler');
               setTimeout(() => setActiveIntent(null), 5000);
             }
-            if (data.type === 'WAKE_RESPONSE') { 
+            if (data.type === 'WAKE_RESPONSE' || data.type === 'RESPONSE') { 
               setMessages(prev => [...prev, { role: 'ai', content: data.payload.answer, monologue: data.payload.monologue }]); 
+              
+              // --- Trigger Thought Trace ---
+              if (data.payload.citations && data.payload.citations.length > 0) {
+                setToasts(prev => [{ id: Date.now(), type: 'system', message: 'Thought Trace Active: Illuminating neural path...' }, ...prev]);
+                // We'll pass the citations to the PalaceView if it's active
+                // For now, we simulate the 'Glow' intent
+                setActiveIntent('NEURAL_TRACE');
+              }
+              // -----------------------------
+
               setCurrentView('chat'); 
-              if (socketRef.current?.isMuted === false) speakText(data.payload.answer);
+              if (data.audio) {
+                enqueueAudio(data.audio);
+              }
             }
             else if (data.type === 'OS_CONTROL') {
               const { view, action } = data.payload;
@@ -164,7 +179,7 @@ function AkashaOSContent() {
               if (action === 'toggle_theme') setTheme(theme === 'dark' ? 'light' : 'dark');
               if (data.message) {
                 setMessages(prev => [...prev, { role: 'ai', content: data.message }]);
-                speakText(data.message);
+                if (data.audio) enqueueAudio(data.audio);
               }
             }
             else if (data.type === 'ACTION_COMPLETE') {
@@ -172,7 +187,7 @@ function AkashaOSContent() {
               setTimeout(() => setIsActionActive(false), 3000);
               setMessages(prev => [...prev, { role: 'ai', content: data.message }]);
               setCurrentView('butler');
-              speakText(data.message);
+              if (data.audio) enqueueAudio(data.audio);
               refreshData();
             }
             else if (data.event === 'NEW_ARTIFACT_INGESTED') { 
@@ -188,7 +203,7 @@ function AkashaOSContent() {
     };
     connectSocket();
     return () => socketRef.current?.close();
-  }, [isAuthenticated]);
+  }, [isAuthenticated, enqueueAudio]);
 
   if (!isAuthenticated) {
     return <AuthView onAuthSuccess={() => setIsAuthenticated(true)} />;
@@ -228,6 +243,8 @@ function AkashaOSContent() {
           <NavItem icon={LayoutDashboard} label="Dashboard" id="dashboard" />
           <NavItem icon={Zap} label="Butler" id="butler" />
           <NavItem icon={Library} label="Deep Library" id="library" />
+          <NavItem icon={Book} label="Neural Library" id="digital_library" />
+          <NavItem icon={GraduationCap} label="Synaptic Tutor" id="tutor" />
           <NavItem icon={Network} label="Neural Graph" id="graph" />
           <NavItem icon={Globe} label="Sovereign Network" id="network" />
           <NavItem icon={Hammer} label="Neural Forge" id="forge" />
@@ -253,7 +270,7 @@ function AkashaOSContent() {
       </aside>
 
       <main className="flex-1 flex flex-col relative min-w-0 h-screen z-10 overflow-hidden">
-        {/* HUD Overlay (Jarvis Style) */}
+        {/* HUD Overlay (Neural Interface Style) */}
         <div className={`absolute top-0 left-0 right-0 h-1 z-[70] transition-all duration-1000 ${isSynthesizing ? 'bg-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.5)]' : 'bg-transparent'}`}></div>
         
         {activeIntent && (
@@ -271,7 +288,8 @@ function AkashaOSContent() {
             <span className="hidden sm:inline mx-2 text-stone-200">/</span>
             <span className={`capitalize font-bold tracking-tight truncate ${colors.textMain}`}>{currentView}</span>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-6">
+            <NeuralClock />
             <button 
               onClick={() => setToasts([])} 
               className={`p-2 transition-colors relative ${toasts.length > 0 ? 'text-amber-500' : 'text-stone-400 hover:text-amber-500'}`}
@@ -296,6 +314,8 @@ function AkashaOSContent() {
               {currentView === 'dashboard' && <DashboardView analytics={analytics} recentArtifacts={artifacts} onIngest={refreshData} theme={theme} setView={setCurrentView} />}
               {currentView === 'butler' && <ButlerView theme={theme} />}
               {currentView === 'library' && <LibraryView artifacts={artifacts || []} analytics={analytics} theme={theme} />}
+              {currentView === 'digital_library' && <DigitalLibrary theme={theme} />}
+              {currentView === 'tutor' && <TutorView theme={theme} />}
               {currentView === 'graph' && <GraphView theme={theme} />}
               {currentView === 'network' && <NetworkView theme={theme} />}
               {currentView === 'forge' && <ForgeView theme={theme} />}
@@ -308,8 +328,14 @@ function AkashaOSContent() {
           </AnimatePresence>
         </div>
         <div className="absolute bottom-10 left-1/2 -translate-x-1/2 z-40 flex flex-col items-center">
-          <div onClick={() => setIsListening(!isListening)}>
-            <ArcReactor isListening={isListening} isThinking={isSynthesizing} isActionActive={isActionActive} theme={theme} />
+          <div 
+            className="w-48 h-48 cursor-pointer active:scale-95 transition-transform"
+            onClick={() => isListening ? stopListening() : startListening()}
+          >
+            <Orb 
+              state={isPlaying ? 'speaking' : (isSynthesizing ? 'thinking' : (isListening ? 'listening' : 'idle'))} 
+              analyser={analyser} 
+            />
           </div>
           <span className={`text-[10px] font-bold uppercase tracking-[0.2em] mt-3 transition-all duration-500 ${isListening ? 'text-amber-500 opacity-100' : 'text-stone-500 opacity-40'}`}>
             {isListening ? 'Sovereign Ears Active' : 'Neural Core Ready'}

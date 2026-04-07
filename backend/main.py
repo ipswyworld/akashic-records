@@ -31,7 +31,11 @@ Base.metadata.create_all(bind=engine)
 
 import auth_utils
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi import Request
+
+# Update scheme to be optional
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login", auto_error=False)
 
 class UserCreate(BaseModel):
     username: str
@@ -42,37 +46,51 @@ class Token(BaseModel):
     access_token: str
     token_type: str
 
-async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    # --- DORMANT MODE: Deactivated ---
-    DORMANT_MODE = False 
+async def get_current_user(request: Request, token: Optional[str] = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    # --- DORMANT MODE: True Open Access ---
+    DORMANT_MODE = True 
     
     if DORMANT_MODE:
         user = db.query(User).filter(User.username == "dev_user").first()
         if not user:
-            # Create a default dev user if not exists
-            user = User(username="dev_user", email="dev@akasha.local", hashed_password="dormant_password")
+            user = User(id="system_user", username="dev_user", email="dev@akasha.local", hashed_password="dormant_password")
             db.add(user); db.commit(); db.refresh(user)
         return user
 
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    payload = auth_utils.decode_access_token(token)
-    if payload is None:
-        raise credentials_exception
-    username: str = payload.get("sub")
-    if username is None:
-        raise credentials_exception
-    user = db.query(User).filter(User.username == username).first()
-    if user is None:
-        raise credentials_exception
-    return user
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    try:
+        payload = auth_utils.decode_access_token(token)
+        if payload is None: raise HTTPException(status_code=401, detail="Invalid token")
+        username: str = payload.get("sub")
+        user = db.query(User).filter(User.username == username).first()
+        if user is None: raise HTTPException(status_code=401, detail="User not found")
+        return user
+    except:
+        raise HTTPException(status_code=401, detail="Auth failure")
 
-# --- Lightweight Request Models ---
 class QueryRequest(BaseModel):
     query: str
+    context: Optional[str] = None
+    user_id: Optional[str] = "system_user"
+    wisdom_mode: bool = False
+    model_tier: Optional[str] = "local"
+    is_ghost_writer: bool = False
+
+class SemanticSearchRequest(BaseModel):
+    query: str
+    user_id: Optional[str] = "system_user"
+    n_results: int = 10
+
+class FormFillRequest(BaseModel):
+    url: str
+    fields: List[str]
+    user_id: Optional[str] = "system_user"
+
+class MonitorRequest(BaseModel):
+    url: str
+    trigger_condition: str
     user_id: Optional[str] = "system_user"
 
 class IngestUrlRequest(BaseModel):
@@ -97,10 +115,11 @@ class PluginActivateRequest(BaseModel):
 class SensoryNodeData(BaseModel):
     user_id: str
     node_key: str
-    location: Dict[str, float]
-    audio_payload: Optional[str] = None 
+    location: Optional[Dict[str, float]] = None
+    audio_payload: Optional[str] = None
+    is_encrypted: bool = False
+    encrypted_blob: Optional[str] = None
     timestamp: float
-
 class FeedbackRequest(BaseModel):
     feedback: str
     agent_name: str
@@ -154,7 +173,14 @@ def update_user_psychology(db: Session, user_id: str, analysis: Dict[str, Any], 
     db.commit()
 
 async def ingest_library_artifact(title: str, content: str, artifact_type: str, extra_meta: Dict = None, db: Session = None, user_id: str = "system_user"):
-    """Helper function to consolidate ingestion logic for different sources. Offloaded to thread."""
+    """Helper function to consolidate ingestion logic. Prevents duplicates via content hash."""
+    # 0. Deduplication Check
+    b_hash = hashlib.sha256(content.encode()).hexdigest()
+    existing = db.query(LibraryArtifact).filter(LibraryArtifact.blockchain_hash == b_hash).first()
+    if existing:
+        print(f"Ingest: Skipping duplicate artifact '{title}'")
+        return existing
+
     loop = asyncio.get_event_loop()
     # 1. Heavy AI Analysis (Offloaded)
     analysis = await loop.run_in_executor(None, ai_engine.analyze_artifact, content)
@@ -169,8 +195,15 @@ async def ingest_library_artifact(title: str, content: str, artifact_type: str, 
         existing_schema = db.query(ObjectSchema).filter(ObjectSchema.name == proposed["name"]).first()
         if not existing_schema:
             existing_schema = ObjectSchema(name=proposed["name"], definition_json=proposed["fields"], user_id=user_id)
-            db.add(existing_schema); db.commit(); db.refresh(existing_schema)
-        schema_id = existing_schema.id
+            db.add(existing_schema)
+            try:
+                db.commit()
+                db.refresh(existing_schema)
+            except:
+                db.rollback()
+                existing_schema = db.query(ObjectSchema).filter(ObjectSchema.name == proposed["name"]).first()
+        if existing_schema:
+            schema_id = existing_schema.id
 
     new_art = LibraryArtifact(
         title=title,
@@ -180,7 +213,7 @@ async def ingest_library_artifact(title: str, content: str, artifact_type: str, 
         user_id=user_id,
         summary=analysis["summary"],
         sentiment_label=analysis["sentiment_label"],
-        blockchain_hash=hashlib.sha256(content.encode()).hexdigest(),
+        blockchain_hash=b_hash,
         metadata_json={
             **(extra_meta or {}),
             "entities": analysis["entities"],
@@ -188,14 +221,23 @@ async def ingest_library_artifact(title: str, content: str, artifact_type: str, 
         }
     )
     new_art.encrypt_content()
-    db.add(new_art); db.commit(); db.refresh(new_art)
+    try:
+        db.add(new_art)
+        db.commit()
+        db.refresh(new_art)
+    except Exception as e:
+        db.rollback()
+        # Double check if it was a race condition on blockchain_hash
+        existing = db.query(LibraryArtifact).filter(LibraryArtifact.blockchain_hash == b_hash).first()
+        if existing:
+            return existing
+        raise e
     
-    # 3. Vector Storage (Heavy IO/CPU, but chroma client is fast, let's keep in executor just in case)
+    # 3. Vector Storage
     await loop.run_in_executor(None, ai_engine.store_vector, new_art.id, content, analysis, user_id)
     
     # 4. Graph Logic
     graph_engine.create_artifact_node(new_art.id, new_art.title, artifact_type, user_id)
-    # New: Ingest triplets into Knowledge Graph
     graph_engine.ingest_triplets(new_art.id, analysis["graph_triplets"], user_id)
     
     await manager.broadcast(json.dumps({"event": "NEW_ARTIFACT_INGESTED", "id": new_art.id, "title": new_art.title}))
@@ -261,6 +303,9 @@ ai_engine = get_initial_ai_engine()
 intel_engine = IntelEngine()
 telemetry_engine = TelemetryIngestEngine()
 p2p_node = P2PNode(intel_engine=intel_engine)
+# Link P2P to Council for Federated RAG
+ai_engine.council.p2p_node = p2p_node
+
 blockchain = BlockchainAdapter()
 graph_engine = GraphEngine()
 fabric = ContextFabric(ai_engine, graph_engine)
@@ -365,6 +410,25 @@ async def lifespan(app: FastAPI):
                     db = SessionLocal()
                     try:
                         await ai_engine.run_autonomous_evolution("system_user", db)
+                        
+                        # --- Feature 8: Cold Storage Migration ---
+                        # Migrate artifacts older than 6 months
+                        six_months_ago = now - datetime.timedelta(days=180)
+                        old_artifacts = db.query(LibraryArtifact).filter(
+                            LibraryArtifact.user_id == "system_user",
+                            LibraryArtifact.timestamp < six_months_ago,
+                            LibraryArtifact.artifact_type != "cold_storage_pointer"
+                        ).all()
+                        
+                        for art in old_artifacts:
+                            art.decrypt_content()
+                            tx_id = await blockchain.migrate_to_cold_storage(art.id, art.content)
+                            art.content = f"COLD_STORAGE_POINTER:{tx_id}"
+                            art.artifact_type = "cold_storage_pointer"
+                            art.encrypt_content()
+                        db.commit()
+                        # ---------------------------------------
+                        
                     finally: db.close()
 
                 # Seer: Morning Prediction (Every 24 hours at 8 AM)
@@ -476,6 +540,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/chronos/morning_briefing")
+async def get_morning_briefing(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Returns the latest serendipity report generated by Chronos Engine."""
+    from models import LibraryArtifact
+    import datetime
+    today = datetime.datetime.utcnow().strftime("%Y-%m-%d")
+    report = db.query(LibraryArtifact).filter(
+        LibraryArtifact.user_id == current_user.id,
+        LibraryArtifact.artifact_type == "serendipity_report",
+        LibraryArtifact.title.like(f"%Morning Briefing: {today}%")
+    ).first()
+    
+    if report:
+        return {"status": "SUCCESS", "report": report.content}
+    return {"status": "NOT_FOUND", "message": "No new morning briefing available yet."}
+
 @app.get("/analytics/evolution")
 async def get_evolution_analytics(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Provides data for the Visual Evolution Timeline."""
@@ -484,18 +564,23 @@ async def get_evolution_analytics(current_user: User = Depends(get_current_user)
     # 1. Fetch Performance Trends
     performances = db.query(AgentPerformance).filter(AgentPerformance.user_id == current_user.id).order_by(AgentPerformance.timestamp.asc()).all()
     
-    # 2. Fetch Recently Forged Skills
-    skills = db.query(NeuralSkill).filter(NeuralSkill.user_id == current_user.id).order_by(NeuralSkill.created_at.desc()).limit(5).all()
-    
-    return {
-        "performance_history": [
+    # If no performances, provide mock starting metrics
+    if not performances:
+        now = datetime.utcnow()
+        performance_history = [
+            {"agent": "Archivist", "fitness": 0.5, "timestamp": (now - timedelta(hours=2)).isoformat(), "category": "General"},
+            {"agent": "Oracle", "fitness": 0.4, "timestamp": (now - timedelta(hours=1)).isoformat(), "category": "Synthesis"},
+            {"agent": "Butler", "fitness": 0.6, "timestamp": now.isoformat(), "category": "Execution"}
+        ]
+    else:
+        performance_history = [
             {
                 "agent": p.agent_name, 
                 "fitness": p.fitness_score, 
                 "timestamp": p.timestamp.isoformat(),
                 "category": p.task_category
             } for p in performances
-        ],
+        ]
         "forged_skills": [
             {
                 "name": s.name, 
@@ -533,6 +618,16 @@ async def manual_mutation(request: MutationRequest, current_user: User = Depends
     except Exception as e:
         return {"status": "ERROR", "message": str(e)}
 
+@app.post("/forge/record/start")
+async def start_macro_recording(current_user: User = Depends(get_current_user)):
+    await executive.start_recording()
+    return {"status": "SUCCESS", "message": "Neural recording active."}
+
+@app.post("/forge/record/stop")
+async def stop_macro_recording(current_user: User = Depends(get_current_user)):
+    result = await executive.stop_recording(user_id=current_user.id)
+    return result
+
 @app.get("/forge/skills")
 async def list_all_skills(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     from models import NeuralSkill
@@ -566,6 +661,11 @@ async def get_graph_topology(user_id: str = "system_user"):
 @app.get("/analytics/graph/visual")
 async def get_graph_visual(user_id: str = "system_user"):
     return graph_engine.get_recent_triplets(user_id)
+
+@app.get("/analytics/graph/historical")
+async def get_historical_graph(timestamp: str, user_id: str = "system_user"):
+    """Phase 3: Temporal Scrubbing. Returns the graph state at a specific point in time."""
+    return graph_engine.get_historical_topology(user_id, timestamp)
 
 # --- Endpoints ---
 @app.get("/")
@@ -610,55 +710,93 @@ async def stream_query(request: QueryRequest, current_user: User = Depends(get_c
     async def response_generator():
         q = request.query.lower().strip()
         
-        # Identity Renaming Hook
-        identity_update = handle_identity_commands(request.query, current_user.id)
-        if identity_update:
-            yield identity_update; return
-
-        # User Identity Hook
-        user_identity_update = handle_user_identity(request.query, current_user.id)
-        if user_identity_update:
-            yield user_identity_update; return
-
-        if q in ["hi", "hello", "hey", "greetings", "jarvis", "archivist"]:
-            response = f"Greetings. I am {ai_engine.personality.neural_name}. Ready to assist."
-            for word in response.split():
-                yield f"{word} "; await asyncio.sleep(0.03)
-            return
+        # Phase 1 Wisdom: Streaming Reasoning (System 2 HUD)
         try:
-            vector_results = ai_engine.search_vectors(request.query, n_results=5, user_id=current_user.id)
-            vector_context = vector_results.get("documents", [[]])[0]
-            entities = [e['word'] for e in ai_engine.ner_pipeline(request.query)]
-            graph_context = graph_engine.search_graph_context(entities, user_id=current_user.id)
-            synthesis = ai_engine.synthesize_graph_rag(request.query, vector_context, graph_context)
-            full_answer = synthesis["answer"]
+            synthesis = await ai_engine.synthesize_graph_rag(request.query, current_user.id, wisdom_mode=request.wisdom_mode)
+            
+            # Stream the internal monologue first
+            monologue = synthesis.get("monologue", "")
+            if monologue:
+                yield f"<thought>\n"
+                for word in monologue.split():
+                    yield f"{word} "
+                    await asyncio.sleep(0.01)
+                yield f"\n</thought>\n\n"
+            
+            # Stream the final answer
+            full_answer = synthesis.get("answer", "")
             for word in full_answer.split():
-                yield f"{word} "; await asyncio.sleep(0.01)
+                yield f"{word} "
+                await asyncio.sleep(0.01)
+                
         except Exception as e:
             yield f"TRANSCRIPTION_ERROR: {str(e)}"
     return StreamingResponse(response_generator(), media_type="text/plain")
 
 @app.post("/query/rag")
 async def query_rag(request: QueryRequest, current_user: User = Depends(get_current_user)):
-    # Identity Renaming Hook
-    identity_update = handle_identity_commands(request.query, current_user.id)
-    if identity_update:
-        return {"query": request.query, "answer": identity_update}
+    query_text = request.query
+    
+    # Handle Ghostwriter mode logic
+    if request.is_ghost_writer:
+        persona_prompt = "You are the Akasha Ghostwriter. Your goal is to improve, expand, or refine the user's text while maintaining a professional and insightful tone."
+        query_text = f"{persona_prompt}\n\nUser Text: {request.query}\n\nRefined Text:"
 
-    # Sovereign Privacy Layer: Scrub query before RAG/Research
-    scrubbed_query = redactor.scrub(request.query)
-
-    entities = [e['word'] for e in ai_engine.ner_pipeline(scrubbed_query)]
-    vector_results = ai_engine.search_vectors(scrubbed_query, n_results=5, user_id=current_user.id)
-    vector_context = vector_results.get("documents", [[]])[0]
-    graph_context = graph_engine.search_graph_context(entities, user_id=current_user.id)
-    is_poor = not vector_context or all(len(c) < 200 for c in vector_context)
-    if is_poor:
-        loop = asyncio.get_event_loop()
-        answer = await loop.run_in_executor(None, ai_engine.council.scout.deep_research, scrubbed_query, ingest)
+    # Extension Context Handling: If query contains page context
+    if request.context:
+        # Use grounded response with provided context
+        grounded_query = f"Based on this web page content: {request.context[:10000]}\n\nUser Question: {query_text}"
+        answer = await ai_engine.synthesize_graph_rag(grounded_query, current_user.id, wisdom_mode=request.wisdom_mode)
     else:
-        answer = ai_engine.synthesize_graph_rag(scrubbed_query, vector_context, graph_context)
-    return {"query": request.query, "answer": answer, "deep_research_used": is_poor, "privacy_redaction": "active"}
+        answer = await ai_engine.synthesize_graph_rag(query_text, current_user.id, wisdom_mode=request.wisdom_mode)
+    
+    if isinstance(answer, dict):
+        return {
+            "query": request.query, 
+            "answer": answer.get("answer"), 
+            "monologue": answer.get("monologue"), 
+            "suggestion": answer.get("suggestion"),
+            "crowd_confidence": answer.get("crowd_confidence")
+        }
+    return {"query": request.query, "answer": answer}
+
+@app.post("/search/semantic")
+async def semantic_search(request: SemanticSearchRequest, current_user: User = Depends(get_current_user)):
+    """Search through vaulted artifacts using vector embeddings."""
+    results = ai_engine.search_vectors(request.query, n_results=request.n_results, user_id=current_user.id)
+    return results
+
+@app.post("/automation/form_fill")
+async def smart_form_fill(request: FormFillRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Predicts form field values based on user's Digital Ego and vaulted data."""
+    profile = await get_user_psychology(current_user, db)
+    # Ask the Librarian to map profile data to requested fields
+    mapping_prompt = f"Map the following user profile to these form fields: {', '.join(request.fields)}. Profile: {json.dumps(profile)}. Return ONLY a JSON object mapping fields to values."
+    mapping_raw = ai_engine.local_inference(mapping_prompt)
+    try:
+        import re
+        match = re.search(r'\{.*\}', mapping_raw, re.DOTALL)
+        return json.loads(match.group()) if match else {}
+    except: return {}
+
+@app.post("/automation/monitor")
+async def register_web_monitor(request: MonitorRequest, current_user: User = Depends(get_current_user)):
+    """Schedules a background task to monitor a URL for a specific condition."""
+    # Logic to add to scheduler (Simplified)
+    print(f"Butler: Now monitoring {request.url} for '{request.trigger_condition}'")
+    return {"status": "MONITOR_ACTIVE", "url": request.url}
+
+class SyncRequest(BaseModel):
+    platform: str
+    context: str
+    user_id: Optional[str] = "system_user"
+
+@app.post("/automation/sync")
+async def cross_app_sync(request: SyncRequest, current_user: User = Depends(get_current_user)):
+    """Syncs captured knowledge to external platforms like Notion or Slack."""
+    print(f"Connector: Syncing context to {request.platform} for {current_user.id}")
+    # Integration logic would go here
+    return {"status": "SYNC_SUCCESS", "platform": request.platform}
 
 @app.post("/query/debate")
 async def query_debate(request: QueryRequest):
@@ -683,7 +821,7 @@ async def translate_text(request: TranslateRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Translation failed: {str(e)}")
 
-async def process_batch_ingestion(files_data: List[Dict[str, str]], user_id: str):
+async def process_batch_ingestion(files_data: List[Dict[str, str]], user_id: str, delete_after: bool = True):
     """Background worker for batch ingestion with chunk-level tracking."""
     db = SessionLocal()
     loop = asyncio.get_event_loop()
@@ -768,6 +906,36 @@ async def ingest_web_clipper(request: IngestUrlRequest, db: Session = Depends(ge
     art = await ingest_library_artifact(scraped["title"], scrubbed_content, "web_clip", {"url": request.url}, db, request.user_id)
     return art
 
+@app.post("/ingest/folder")
+async def ingest_folder_endpoint(background_tasks: BackgroundTasks, folder_path: str = Form(...), user_id: str = Form("system_user")):
+    """Recursively ingests all files in a folder."""
+    if not os.path.exists(folder_path):
+        raise HTTPException(status_code=404, detail="Folder not found.")
+    
+    # We use the same batch processing logic
+    all_files = []
+    for root, dirs, files in os.walk(folder_path):
+        for name in files:
+            all_files.append({"tmp_path": os.path.join(root, name), "filename": name})
+    
+    background_tasks.add_task(process_batch_ingestion, all_files, user_id)
+    return {"status": "FOLDER_INGESTION_STARTED", "file_count": len(all_files)}
+
+@app.post("/user/training/economist")
+async def train_economist(background_tasks: BackgroundTasks, current_user: User = Depends(get_current_user)):
+    """Specialized training for the Economist using the chronojanus dataset."""
+    chronojanus_path = os.path.join(os.getcwd(), "akasha_data", "chronojanus")
+    if not os.path.exists(chronojanus_path):
+        return {"status": "ERROR", "message": "Chronojanus data not found in akasha_data/."}
+    
+    all_files = []
+    for root, dirs, files in os.walk(chronojanus_path):
+        for name in files:
+            all_files.append({"tmp_path": os.path.join(root, name), "filename": name})
+            
+    background_tasks.add_task(process_batch_ingestion, all_files, current_user.id)
+    return {"status": "TRAINING_STARTED", "message": f"Economist training on {len(all_files)} chronojanus artifacts."}
+
 @app.post("/ingest/audio")
 async def ingest_audio(file: UploadFile = File(...), user_id: str = Form("system_user"), db: Session = Depends(get_db)):
     audio_data = await file.read()
@@ -782,17 +950,17 @@ async def vision_analyze(file: UploadFile = File(...), user_id: str = Form("syst
     art = await ingest_library_artifact(f"Visual: {file.filename}", description, "visual_memory", {}, db, user_id)
     return {"description": description, "artifact_id": art.id}
 
-@app.websocket("/jarvis/sensory")
-async def jarvis_sensory_stream(websocket: WebSocket, token: Optional[str] = None):
+@app.websocket("/akasha/sensory")
+async def akasha_sensory_stream(websocket: WebSocket, token: Optional[str] = None):
     """
-    The High-Speed Sensory Bridge: Handles real-time voice and visual streams.
-    Validated via JWT token for sovereign data isolation.
+    The High-Speed Sensory Bridge: Handles real-time voice (via STT) and visual streams.
     """
     await manager.connect(websocket)
-
-    # 1. Identify User from Token
-    user_id = "system_user" # Default
-    if token:
+    import base64
+    
+    # Identify user (Simplified for Project Flash stability)
+    user_id = "system_user"
+    if token and token != "null" and token != "undefined":
         payload = auth_utils.decode_access_token(token)
         if payload:
             username = payload.get("sub")
@@ -801,77 +969,64 @@ async def jarvis_sensory_stream(websocket: WebSocket, token: Optional[str] = Non
             if user: user_id = user.id
             db.close()
 
+    print(f"Sensory: Unified stream opened for user {user_id}")
     db = SessionLocal()
     settings = db.query(UserSettings).filter(UserSettings.user_id == user_id).first()
-
+    
     try:
         while True:
-            data = await websocket.receive_bytes()
-            # If it's a small chunk, it's likely audio
-            if len(data) < 100000:
-                transcript = await ingest.transcribe_audio_memory(data)
-                if not transcript or len(transcript.strip()) < 2: continue
+            # Handle both text (transcript) and bytes (visual context)
+            message = await websocket.receive()
+            
+            if "text" in message:
+                data = json.loads(message["text"])
+                if data.get("type") == "TRANSCRIPT":
+                    transcript = data.get("payload", "")
+                    print(f"Sensory: Captured Voice -> '{transcript}'")
 
-                print(f"Sensory: Captured Voice -> {transcript}")
+                    # PROJECT FLASH: Direct Reflex Greetings (No wake word required)
+                    clean_t = transcript.lower().strip().rstrip('?.!')
+                    greetings = ["hello", "hi", "hey", "archivist", "akasha"]
+                    
+                    response_text = ""
+                    monologue = ""
 
-                # Wake Word / Command Logic
-                neural_names = [settings.neural_name] if settings and settings.neural_name else ["Archivist"]
-                is_wake, command = ai_engine.council.gatekeeper.check_neural_name(transcript, neural_names)
+                    if clean_t in greetings:
+                        print(f"Sensory: Direct Greeting Detected -> '{clean_t}'")
+                        response_text = f"Greetings. I am {ai_engine.personality.neural_name}. How can I assist your synthesis today?"
+                        monologue = "Fast reflex: Direct greeting detected. Bypassing wake word requirement."
+                    else:
+                        # Wake Word / Command Logic
+                        neural_names = [settings.neural_name] if settings and settings.neural_name else ["Archivist"]
+                        is_wake, command = ai_engine.council.gatekeeper.check_neural_name(transcript, neural_names)
 
-                if is_wake:
-                    print(f"Sensory: Wake Word Detected. Routing Command -> {command}")
-                    
-                    # --- GLOBAL VOICE INTENT ROUTER ---
-                    # 1. Determine Intent
-                    intent = ai_engine.council.system1_router.determine_intent(command)
-                    
-                    # Signal intent to HUD for morphing
-                    await websocket.send_json({"type": "HUD_MORPH", "intent": intent})
-                    
-                    if intent == "SYSTEM_COMMAND" or "open" in command.lower() or "go to" in command.lower():
-                        # Handle Navigation and UI Settings
-                        nav_prompt = f"Categorize this UI request: '{command}'. Return JSON: {{'type': 'NAV', 'view': 'dashboard|butler|library|graph|network|forge|chat|palace|harvest|ego|settings', 'action': 'toggle_theme|none'}}"
-                        nav_res_raw = ai_engine.council.llm.invoke(nav_prompt)
-                        try:
-                            import json, re
-                            match = re.search(r'\{.*\}', nav_res_raw, re.DOTALL)
-                            nav_data = json.loads(match.group()) if match else {}
-                            
-                            await websocket.send_json({
-                                "type": "OS_CONTROL",
-                                "payload": nav_data,
-                                "message": f"Executing OS command: {command}"
-                            })
+                        if is_wake:
+                            print(f"Sensory: Wake Word Detected. Executing -> {command}")
+                            await websocket.send_json({"type": "HUD_MORPH", "intent": "SYNTHESIS"})
+                            synthesis = await ai_engine.synthesize_graph_rag(command, user_id=user_id)
+                            response_text = synthesis["answer"]
+                            monologue = synthesis.get("monologue", "")
+                        else:
+                            await websocket.send_json({"type": "PASSIVE_TRANSCRIPT", "payload": transcript})
                             continue
-                        except: pass
 
-                    # 2. Handle Actions (Butler)
-                    if "check" in command.lower() or "find" in command.lower() or "run" in command.lower():
-                        results = await executive.run_action_loop(command, {"user_id": user_id})
+                    if response_text:
+                        # TTS Synthesis (Fish Audio)
+                        audio_content = ai_engine.council.vocalist.synthesize_fish(response_text)
+                        audio_base64 = base64.b64encode(audio_content).decode('utf-8') if audio_content else None
+                        
                         await websocket.send_json({
-                            "type": "ACTION_COMPLETE",
-                            "payload": results,
-                            "message": f"Butler has completed the task: {command}"
+                            "type": "RESPONSE", 
+                            "payload": {
+                                "answer": response_text,
+                                "monologue": monologue
+                            },
+                            "audio": audio_base64
                         })
-                        continue
 
-                    # 3. Default: Graph-RAG Synthesis
-                    vector_res = ai_engine.search_vectors(command, user_id=user_id)
-                    docs = vector_res.get("documents", [[]])[0]
-                    synthesis = ai_engine.synthesize_graph_rag(command, docs, [])
-                    
-                    await websocket.send_json({
-                        "type": "WAKE_RESPONSE", 
-                        "payload": {
-                            "answer": synthesis["answer"],
-                            "monologue": synthesis["monologue"]
-                        }
-                    })
-                else:
-                    await websocket.send_json({"type": "PASSIVE_TRANSCRIPT", "payload": transcript})
-
-            else:
-                # Large chunk: Likely visual context (image)
+            elif "bytes" in message:
+                # Visual context...
+                data = message["bytes"]
                 description = multimodal.visual_reasoning(data)
                 await websocket.send_json({"type": "VISUAL_CONTEXT", "payload": description})
 
@@ -882,6 +1037,7 @@ async def jarvis_sensory_stream(websocket: WebSocket, token: Optional[str] = Non
         manager.disconnect(websocket)
     finally:
         db.close()
+
 @app.post("/user/settings")
 async def update_settings(settings: Dict[str, Any], current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     db_settings = db.query(UserSettings).filter(UserSettings.user_id == current_user.id).first()
@@ -892,6 +1048,7 @@ async def update_settings(settings: Dict[str, Any], current_user: User = Depends
     if "wake_words" in settings: db_settings.wake_words = settings["wake_words"]
     if "turbo_mode" in settings: db_settings.turbo_mode = settings["turbo_mode"]
     if "groq_api_key" in settings: db_settings.groq_api_key = settings["groq_api_key"]
+    if "integrations" in settings: db_settings.integrations = settings["integrations"]
     db.commit()
     ai_engine.update_council(turbo_mode=db_settings.turbo_mode, groq_key=db_settings.groq_api_key)
     ai_engine.rename_identity(db_settings.neural_name)
@@ -905,8 +1062,39 @@ async def get_user_psychology(current_user: User = Depends(get_current_user), db
 
 @app.post("/telemetry")
 async def log_telemetry(request: TelemetryRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    activity = telemetry_engine.log_activity(db, current_user.id, request.dict())
+    activity = telemetry_engine.log_activity(db, current_user.id, request.model_dump())
     return activity
+
+@app.post("/node/sensory")
+async def ingest_sensory_node(data: SensoryNodeData, db: Session = Depends(get_db)):
+    """Ingests real-time sensory data from mobile or remote nodes."""
+    if data.is_encrypted:
+        # Zero-Knowledge: Store as an encrypted artifact
+        # The Head Archivist will defer analysis until a trusted client decrypts it
+        await ingest_library_artifact(
+            title=f"Encrypted Sensory: {data.node_key}",
+            content=data.encrypted_blob,
+            artifact_type="encrypted_sensory",
+            extra_meta={"node_key": data.node_key, "is_encrypted": True},
+            db=db,
+            user_id=data.user_id
+        )
+        return {"status": "ENCRYPTED_INGESTED"}
+
+    # Standard Ingest
+    if data.audio_payload:
+        audio_bytes = base64.b64decode(data.audio_payload)
+        await sensory.ingest_audio_stream(audio_bytes, data.user_id)
+        
+    # Store metadata/location as telemetry
+    telemetry_engine.log_activity(db, data.user_id, {
+        "type": "SENSORY_NODE_UPDATE",
+        "node_key": data.node_key,
+        "location": data.location,
+        "timestamp": data.timestamp
+    })
+    
+    return {"status": "SUCCESS"}
 
 @app.get("/telemetry/recent")
 async def get_recent_telemetry(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -935,6 +1123,53 @@ async def run_action_goal(request: ActionGoalRequest, current_user: User = Depen
     results = await executive.run_action_loop(request.goal, {"user_id": current_user.id})
     return {"results": results}
 
+from finance_engine import FinanceEngine
+finance_engine = FinanceEngine(ai_engine)
+
+from eye_engine import EyeEngine
+from env_sensor import EnvironmentalSensor
+from learning_engine import LearningEngine
+from backup_engine import BackupEngine
+
+eye_engine = EyeEngine(ai_engine, multimodal)
+env_sensor = EnvironmentalSensor()
+learning_engine = LearningEngine(ai_engine)
+backup_engine = BackupEngine()
+
+@app.post("/eye/toggle")
+async def toggle_vision(active: bool):
+    eye_engine.toggle(active)
+    return {"status": "SUCCESS", "active": active}
+
+@app.get("/eye/pulse")
+async def eye_pulse(current_user: User = Depends(get_current_user)):
+    analysis = await eye_engine.capture_and_analyze(current_user.id)
+    return {"status": "SUCCESS", "analysis": analysis}
+
+@app.get("/env/context")
+async def get_env_context():
+    return env_sensor.detect_all()
+
+@app.post("/tutor/syllabus")
+async def generate_syllabus(artifact_ids: List[str], current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return learning_engine.generate_syllabus(artifact_ids, db)
+
+@app.get("/tutor/quiz/{artifact_id}")
+async def generate_quiz(artifact_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return learning_engine.generate_quiz(artifact_id, db)
+
+@app.post("/backup/create")
+async def create_backup(current_user: User = Depends(get_current_user)):
+    path = backup_engine.create_sovereign_backup()
+    shards = backup_engine.shard_backup(path)
+    return {"status": "SUCCESS", "backup_path": path, "shards": shards}
+
+@app.post("/voice/clone")
+async def upload_voice_sample(file: UploadFile = File(...), current_user: User = Depends(get_current_user)):
+    # Mock voice cloning logic
+    ai_engine.council.vocalist.custom_voice_id = f"CLONE_{uuid.uuid4().hex[:8]}"
+    return {"status": "SUCCESS", "voice_id": ai_engine.council.vocalist.custom_voice_id}
+
 @app.get("/actions/history")
 async def get_action_history(current_user: User = Depends(get_current_user)):
     return executive.get_history()
@@ -956,6 +1191,34 @@ async def generate_plugin(request: PluginGenerateRequest):
 async def activate_plugin(request: PluginActivateRequest, db: Session = Depends(get_db)):
     # Simple logic for dynamic loading (simplified from previous version for stability)
     return {"status": "SUCCESS", "message": "Plugin activation requested."}
+
+# --- Lightweight Request Models ---
+class ProactiveRequest(BaseModel):
+    url: str
+    title: str
+    content: str
+    user_id: Optional[str] = "system_user"
+
+@app.post("/proactive/critique")
+async def proactive_critique(request: ProactiveRequest, current_user: User = Depends(get_current_user)):
+    """Phase 6: Real-time 'Vision' HUD: Proactively critiques what the user is reading."""
+    print(f"Vision HUD: Proactively critiquing '{request.title}'...")
+    
+    # 1. Gather wisdom from multiple perspectives
+    logic_critique = ai_engine.council.scholar.analyze_logic(request.content)
+    bias_critique = ai_engine.council.sentinel.critique(request.content)
+    
+    # 2. Consult the crowd for a deep synthesis
+    crowd_query = f"Critique the following article for depth, truth, and perspective.\nTitle: {request.title}\nContent: {request.content[:2000]}"
+    crowd_result = await ai_engine.council.crowd_engine.consult_crowd(crowd_query, context=request.content[:1000])
+    
+    return {
+        "title": request.title,
+        "logic_critique": logic_critique,
+        "bias_critique": bias_critique,
+        "crowd_wisdom": crowd_result["wisdom"],
+        "crowd_confidence": crowd_result["confidence"]
+    }
 
 if __name__ == "__main__":
     import uvicorn

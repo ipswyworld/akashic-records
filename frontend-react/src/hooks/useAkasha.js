@@ -23,6 +23,13 @@ export const usePsychology = (userId = 'system_user') => {
   });
 };
 
+export const useSettings = (userId = 'system_user') => {
+  return useQuery({
+    queryKey: ['settings', userId],
+    queryFn: () => api.fetchUserSettings(userId),
+  });
+};
+
 export const useGraphTopology = (userId = 'system_user') => {
   return useQuery({
     queryKey: ['graphTopology', userId],

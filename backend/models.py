@@ -162,7 +162,7 @@ class UserSettings(Base):
     # Unified Identity (Replaces technical 'wake_names')
     neural_name = Column(String, default="Archivist")
     assistant_persona = Column(String, default="Archivist")
-    wake_words = Column(String, default="Archivist, Akasha, Jarvis") # Comma-separated triggers
+    wake_words = Column(String, default="Archivist, Akasha") # Comma-separated triggers
     
     # Voice Fingerprinting (Stored as a vector/embedding)
     voice_fingerprint = Column(JSON, nullable=True) 
@@ -174,6 +174,9 @@ class UserSettings(Base):
     # Speed & Optimization
     turbo_mode = Column(Boolean, default=False) # If true, uses Groq for chat synthesis
     groq_api_key = Column(String, nullable=True) # Encrypted in production
+
+    # Integrations (Phase 2 expansion)
+    integrations = Column(JSON, default={}) # Stores { "Slack": true, "Spotify": false, ... }
     
     last_updated = Column(DateTime, default=datetime.datetime.utcnow)
 

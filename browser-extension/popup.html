@@ -1,226 +1,157 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="UTF-8">
+  <meta charset="utf-8">
+  <title>Akasha: The Sovereign Node</title>
   <style>
-    :root {
-      --primary: #bb86fc;
-      --secondary: #03dac6;
-      --bg: rgba(18, 18, 18, 0.9);
-      --surface: rgba(255, 255, 255, 0.05);
-      --text: #e0e0e0;
-      --error: #cf6679;
-    }
+    body { width: 350px; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #121212; color: #e0e0e0; }
+    .header { background-color: #1f1f1f; padding: 15px; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center; }
+    .header h1 { margin: 0; font-size: 16px; font-weight: 600; color: #bb86fc; display: flex; align-items: center; gap: 8px; }
+    .header h1 span { font-size: 20px; }
+    .settings-icon { cursor: pointer; font-size: 18px; opacity: 0.7; transition: opacity 0.2s; }
+    .settings-icon:hover { opacity: 1; }
+    
+    .container { padding: 15px; }
+    
+    .btn { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; padding: 12px; margin-bottom: 10px; border: none; border-radius: 8px; background-color: #2d2d2d; color: #fff; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
+    .btn:hover { background-color: #3d3d3d; transform: translateY(-1px); }
+    .btn:active { transform: translateY(1px); }
+    .btn.primary { background-color: #bb86fc; color: #000; }
+    .btn.primary:hover { background-color: #a370f7; }
+    
+    .status-msg { text-align: center; font-size: 12px; min-height: 18px; margin-top: 10px; font-weight: 500; }
+    
+    .settings-panel { display: none; background-color: #1f1f1f; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #333; }
+    .settings-panel input { width: 100%; padding: 8px; margin-bottom: 10px; background-color: #2d2d2d; border: 1px solid #444; color: #fff; border-radius: 4px; box-sizing: border-box; }
+    
+    .summary-box { display: none; background-color: #1e1e1e; border: 1px solid #333; border-radius: 8px; padding: 12px; margin-top: 15px; font-size: 13px; line-height: 1.5; color: #ccc; max-height: 200px; overflow-y: auto; }
+    
+    /* Chat Interface */
+    .chat-container { display: flex; flex-direction: column; height: 250px; background-color: #1e1e1e; border-radius: 8px; border: 1px solid #333; margin-top: 15px; }
+    .chat-history { flex: 1; padding: 10px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+    .chat-msg { padding: 8px 12px; border-radius: 12px; font-size: 13px; max-width: 85%; }
+    .msg-user { background-color: #2d2d2d; align-self: flex-end; border-bottom-right-radius: 2px; }
+    .msg-ai { background-color: #38255c; color: #e0e0e0; align-self: flex-start; border-bottom-left-radius: 2px; }
+    .chat-input-area { display: flex; padding: 8px; border-top: 1px solid #333; }
+    .chat-input { flex: 1; background: transparent; border: none; color: #fff; outline: none; font-size: 13px; }
+    .chat-send { background: none; border: none; color: #bb86fc; cursor: pointer; font-size: 16px; padding: 0 5px; }
 
-    body {
-      width: 320px;
-      margin: 0;
-      padding: 0;
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background-color: #121212;
-      color: var(--text);
-      overflow-x: hidden;
-    }
+    /* Model Selector & RAG Badges */
+    .meta-bar { display: flex; gap: 10px; padding: 10px 15px; background: #1a1a1a; border-bottom: 1px solid #333; align-items: center; justify-content: space-between; }
+    .model-select { background: #2d2d2d; color: #bb86fc; border: none; font-size: 11px; padding: 4px 8px; border-radius: 4px; outline: none; }
+    .rag-badge { font-size: 10px; padding: 2px 6px; border-radius: 10px; background: #333; color: #888; border: 1px solid #444; }
+    .rag-active { background: #1e3a2f; color: #4ade80; border-color: #4ade80; }
+    .ghost-mode { font-size: 11px; color: #ff79c6; cursor: pointer; display: flex; align-items: center; gap: 4px; }
 
-    .container {
-      padding: 20px;
-      background: linear-gradient(135deg, rgba(187, 134, 252, 0.05) 0%, rgba(18, 18, 18, 0) 100%);
-      min-height: 400px;
-    }
-
-    /* Glassmorphism Effect */
-    .glass {
-      background: var(--surface);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      border-radius: 12px;
-      padding: 15px;
-      margin-bottom: 15px;
-    }
-
-    header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 20px;
-    }
-
-    h1 {
-      font-size: 18px;
-      margin: 0;
-      background: linear-gradient(to right, var(--primary), var(--secondary));
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      font-weight: 800;
-      letter-spacing: -0.5px;
-    }
-
-    .status-dot {
-      width: 8px;
-      height: 8px;
-      background-color: var(--secondary);
-      border-radius: 50%;
-      box-shadow: 0 0 10px var(--secondary);
-    }
-
-    .actions {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-
-    button {
-      padding: 12px;
-      border: none;
-      border-radius: 8px;
-      cursor: pointer;
-      font-weight: 600;
-      font-size: 13px;
-      transition: all 0.3s ease;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      background: var(--surface);
-      color: var(--text);
-      border: 1px solid rgba(255, 255, 255, 0.1);
-    }
-
-    button:hover:not(:disabled) {
-      background: rgba(255, 255, 255, 0.1);
-      transform: translateY(-1px);
-    }
-
-    button:active:not(:disabled) {
-      transform: translateY(0);
-    }
-
-    button:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-
-    .btn-primary {
-      background: var(--primary);
-      color: #000;
-      border: none;
-    }
-
-    .btn-primary:hover:not(:disabled) {
-      background: #a370f7;
-      box-shadow: 0 4px 15px rgba(187, 134, 252, 0.3);
-    }
-
-    .btn-outline {
-      border: 1px solid var(--primary);
-      color: var(--primary);
-      background: transparent;
-    }
-
-    .summary-box {
-      font-size: 12px;
-      line-height: 1.6;
-      color: #b0b0b0;
-      display: none;
-      max-height: 200px;
-      overflow-y: auto;
-    }
-
-    .summary-box::-webkit-scrollbar {
-      width: 4px;
-    }
-
-    .summary-box::-webkit-scrollbar-thumb {
-      background: var(--surface);
-      border-radius: 10px;
-    }
-
-    .settings-panel {
-      display: none;
-    }
-
-    input {
-      width: 100%;
-      padding: 10px;
-      margin-bottom: 12px;
-      background: rgba(0, 0, 0, 0.2);
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      color: #fff;
-      border-radius: 6px;
-      font-size: 12px;
-    }
-
-    label {
-      font-size: 10px;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      color: #666;
-      display: block;
-      margin-bottom: 5px;
-    }
-
-    .msg {
-      font-size: 11px;
-      text-align: center;
-      margin-top: 15px;
-      min-height: 15px;
-    }
-
-    /* Sub-agent Mode Indicator */
-    .agent-badge {
-      font-size: 9px;
-      background: rgba(3, 218, 198, 0.1);
-      color: var(--secondary);
-      padding: 2px 6px;
-      border-radius: 4px;
-      border: 1px solid rgba(3, 218, 198, 0.2);
-    }
   </style>
 </head>
 <body>
-  <div class="container">
-    <header>
-      <div>
-        <h1>AKASHA</h1>
-        <span class="agent-badge">Sub-Agent Active</span>
-      </div>
-      <div class="status-dot"></div>
-    </header>
-
-    <div class="glass actions" id="main-actions">
-      <button class="btn-primary" id="clip-page">
-        <span>✨</span> Clip to Akashic Records
-      </button>
-      <button class="btn-outline" id="summarize-page">
-        <span>🧠</span> AI Summary (Autonomous)
-      </button>
-      <button class="btn-outline" id="target-element">
-        <span>🎯</span> Visual Element Target
-      </button>
-      <button id="toggle-settings">
-        <span>⚙️</span> Settings
-      </button>
+  <div class="header">
+    <h1><span>👁️</span> Akasha Node</h1>
+    <div style="display: flex; gap: 12px; align-items: center;">
+      <span class="ghost-mode" id="ghost-toggle" title="Inline Ghostwriter">👻 <span id="ghost-status">OFF</span></span>
+      <span class="settings-icon" id="toggle-settings">⚙️</span>
     </div>
-
-    <div class="glass summary-box" id="summary-box">
-      <strong>Deep Summary:</strong>
-      <p id="summary-text"></p>
-    </div>
-
-    <div class="glass settings-panel" id="settings-panel">
-      <label>Node Endpoint</label>
-      <input type="text" id="apiUrl" placeholder="http://localhost:8001">
-      
-      <label>Vault Identity (User ID)</label>
-      <input type="text" id="userId" placeholder="system_user">
-      
-      <button class="btn-primary" id="save-settings" style="width: 100%;">Apply Changes</button>
-    </div>
-
-    <div class="msg" id="msg"></div>
   </div>
 
+  <div class="meta-bar">
+    <select id="model-select" class="model-select">
+      <option value="local">Local (Gemma 2)</option>
+      <option value="cloud">Cloud (Gemini)</option>
+      <option value="scholar">Scholar (Speculative)</option>
+      <option value="peer">Neural Mesh (P2P)</option>
+    </select>
+    <div id="rag-status" class="rag-badge">Page Context Offline</div>
+  </div>
+
+  <!-- Batch 8: LaTeX & Math Formatting Layer -->
+  <style>
+    .math-tex { color: #4ade80; font-family: 'Courier New', monospace; background: #000; padding: 2px 4px; border-radius: 3px; }
+  </style>
+
+  <!-- Batch 2: Semantic Search Bar -->
+  <div style="padding: 0 15px 10px 15px;">
+    <input type="text" id="semantic-search" placeholder="Search your Neural Library..." style="width: 100%; padding: 8px; background: #1a1a1a; border: 1px solid #333; color: #fff; border-radius: 4px; font-size: 12px;">
+  </div>
+  
+  <div class="container">
+    <div id="settings-panel" class="settings-panel">
+      <!-- ... (Settings inputs remain) ... -->
+      <label style="font-size: 12px; color: #888; margin-bottom: 4px; display: block;">Bridge URL</label>
+      <input type="text" id="apiUrl" placeholder="http://localhost:8001">
+      <label style="font-size: 12px; color: #888; margin-bottom: 4px; display: block;">Auth Token</label>
+      <input type="password" id="userId" placeholder="JWT Token">
+      
+      <!-- Batch 8: Connectors -->
+      <div style="margin-top: 10px; border-top: 1px solid #333; padding-top: 10px;">
+        <label style="font-size: 11px; color: #bb86fc;">Active Connectors:</label>
+        <div style="display: flex; gap: 10px; margin-top: 5px;">
+          <button class="btn" id="sync-notion" style="font-size: 10px; padding: 5px;">Notion</button>
+          <button class="btn" id="sync-slack" style="font-size: 10px; padding: 5px;">Slack</button>
+        </div>
+      </div>
+      
+      <!-- Batch 4: Privacy Toggles -->
+      <div style="margin-top: 10px; border-top: 1px solid #333; padding-top: 10px;">
+        <label style="font-size: 11px; display: flex; align-items: center; gap: 8px; margin-bottom: 5px;">
+          <input type="checkbox" id="pii-shield" checked> PII Redaction Shield
+        </label>
+        <label style="font-size: 11px; display: flex; align-items: center; gap: 8px;">
+          <input type="checkbox" id="zero-data"> Zero-Data Mode (Local Only)
+        </label>
+      </div>
+
+      <button class="btn primary" id="save-settings" style="margin-top: 15px;">Save & Synchronize</button>
+    </div>
+
+    <div id="main-actions">
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; width: 100%;">
+        <button class="btn" id="clip-page" style="margin-bottom: 0;">✨ Vault</button>
+        <button class="btn" id="summarize-page" style="margin-bottom: 0;">🧠 Synthesize</button>
+      </div>
+      
+      <!-- Batch 3: Agentic Buttons -->
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; width: 100%;">
+        <button class="btn" id="fill-form" style="font-size: 12px;">📝 Smart Fill</button>
+        <button class="btn" id="monitor-page" style="font-size: 12px;">👁️ Monitor</button>
+      </div>
+
+      <!-- Batch 5: Visual Intelligence -->
+      <button class="btn" id="visual-reason" style="background: #03dac6; color: #000;">📷 Visual Reasoner</button>
+      
+      <button class="btn" id="target-element"><span>🎯</span> Target Element</button>
+    </div>
+
+    <!-- Batch 6: Digital Ego Mirror -->
+    <div id="ego-mirror" style="background: #1a1a1a; border: 1px solid #333; border-radius: 8px; padding: 12px; margin-top: 15px; font-size: 12px; display: none;">
+      <strong style="color: #03dac6; display: block; margin-bottom: 8px;">Your Digital Ego:</strong>
+      <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+        <span>Mood: <span id="ego-mood" style="color: #fff;">Neutral</span></span>
+        <span>Signal: <span style="color: #4ade80;">Active</span></span>
+      </div>
+      <div id="ego-traits" style="color: #888; font-style: italic;">
+        Syncing cognitive patterns...
+      </div>
+    </div>
+
+    <div id="summary-box" class="summary-box">
+      <strong style="color: #bb86fc; display: block; margin-bottom: 5px;">Synthesis:</strong>
+      <span id="summary-text"></span>
+    </div>
+
+    <!-- Agentic Chat Interface -->
+    <div class="chat-container">
+      <div class="chat-history" id="chat-history">
+        <div class="chat-msg msg-ai">How may I assist you with this page?</div>
+      </div>
+      <div class="chat-input-area">
+        <input type="text" class="chat-input" id="chat-input" placeholder="Ask the Archivist...">
+        <button class="chat-send" id="chat-send">➤</button>
+      </div>
+    </div>
+
+    <div id="msg" class="status-msg"></div>
+  </div>
   <script src="popup.js"></script>
 </body>
 </html>

@@ -49,9 +49,28 @@ impl EncryptionEngine {
     }
 }
 
+struct EmbeddingEngine {
+    // Placeholder for ONNX Session
+}
+
+impl EmbeddingEngine {
+    fn new() -> Self {
+        Self {}
+    }
+
+    fn embed(&self, text: &str) -> Vec<f32> {
+        // High-performance ONNX embedding logic would go here
+        // For now, we return a deterministic mock vector for stability
+        let mut vec = vec![0.0; 384];
+        if !text.is_empty() { vec[0] = 1.0; }
+        vec
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let mut swarm = libp2p::SwarmBuilder::with_new_identity()
+        // ... (Swarm setup remains the same)
         .with_tokio()
         .with_tcp(
             tcp::Config::default(),
@@ -97,6 +116,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             let engine = EncryptionEngine::new(pass, "akasha_salt");
                             let encrypted = engine.encrypt(data);
                             println!("ZKP_BACKUP_RESULT:{}", encrypted);
+                        } else if msg.msg_type == "GENERATE_EMBEDDING" {
+                            let text = msg.payload["text"].as_str().unwrap_or("");
+                            let engine = EmbeddingEngine::new();
+                            let vector = engine.embed(text);
+                            println!("EMBEDDING_RESULT:{:?}", vector);
                         }
                     }
                 }

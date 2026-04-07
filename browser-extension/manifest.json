@@ -1,14 +1,21 @@
 {
   "manifest_version": 3,
-  "name": "Akasha: The Akashic Records",
+  "name": "Akasha: Sovereign Neural Interface",
   "version": "0.1.0",
   "description": "Stream your web activity and clip content into your personal Akashic Records.",
   "permissions": [
     "tabs",
     "storage",
     "activeTab",
-    "scripting"
+    "scripting",
+    "sidePanel",
+    "contextMenus",
+    "notifications",
+    "offscreen"
   ],
+  "side_panel": {
+    "default_path": "popup.html"
+  },
   "host_permissions": [
     "http://localhost:8001/*",
     "http://127.0.0.1:8001/*"
