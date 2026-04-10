@@ -242,7 +242,70 @@ export const speakText = async (text) => {
 };
 
 // --- Self-Improving AI (Feedback) ---
-export const sendAIFeedback = async (agentName, feedback) => {
+export const fetchTodos = async () => {
+  const response = await fetch(`${API_BASE_URL}/todos`, {
+    headers: getHeaders(),
+  });
+  if (!response.ok) throw new Error('Failed to fetch todos');
+  return response.json();
+};
+
+export const createTodo = async (todoData) => {
+  const response = await fetch(`${API_BASE_URL}/todos`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify(todoData),
+  });
+  if (!response.ok) throw new Error('Failed to create todo');
+  return response.json();
+};
+
+export const updateTodo = async (todoId, updates) => {
+  const response = await fetch(`${API_BASE_URL}/todos/${todoId}`, {
+    method: 'PATCH',
+    headers: getHeaders(),
+    body: JSON.stringify(updates),
+  });
+  if (!response.ok) throw new Error('Failed to update todo');
+  return response.json();
+};
+
+export const deleteTodo = async (todoId) => {
+  const response = await fetch(`${API_BASE_URL}/todos/${todoId}`, {
+    method: 'DELETE',
+    headers: getHeaders(),
+  });
+  if (!response.ok) throw new Error('Failed to delete todo');
+  return response.json();
+};
+
+export const strategizeTodo = async (todoId) => {
+  const response = await fetch(`${API_BASE_URL}/todos/${todoId}/strategize`, {
+    method: 'POST',
+    headers: getHeaders(),
+  });
+  if (!response.ok) throw new Error('Failed to strategize todo');
+  return response.json();
+};
+
+export const decomposeTodo = async (todoId) => {
+  const response = await fetch(`${API_BASE_URL}/todos/${todoId}/decompose`, {
+    method: 'POST',
+    headers: getHeaders(),
+  });
+  if (!response.ok) throw new Error('Failed to decompose todo');
+  return response.json();
+};
+
+export const harvestTodos = async () => {
+  const response = await fetch(`${API_BASE_URL}/todos/harvest`, {
+    headers: getHeaders(),
+  });
+  if (!response.ok) throw new Error('Failed to harvest todos');
+  return response.json();
+};
+
+export const sendFeedback = async (agentName, feedback) => {
   const response = await fetch(`${API_BASE_URL}/feedback`, {
     method: 'POST',
     headers: getHeaders(),

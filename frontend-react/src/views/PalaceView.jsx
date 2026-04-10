@@ -92,23 +92,37 @@ const MemoryPalace = ({ theme }) => {
     };
 
     artifacts.forEach((art, i) => {
-      // Create a crystal geometry (Octahedron)
-      const geometry = new THREE.OctahedronGeometry(0.5, 0);
-      const material = new THREE.MeshPhongMaterial({
-        color: typeColors[art.artifact_type] || 0x78716c,
-        emissive: typeColors[art.artifact_type] || 0x78716c,
-        emissiveIntensity: 0.2,
-        shininess: 100,
+      const size = 0.4 + Math.random() * 0.4;
+      const geometry = new THREE.IcosahedronGeometry(size, 0);
+      const color = typeColors[art.artifact_type] || 0x78716c;
+      const material = new THREE.MeshPhysicalMaterial({
+        color: color,
+        emissive: color,
+        emissiveIntensity: 0.5,
+        roughness: 0.2,
+        metalness: 0.8,
         transparent: true,
-        opacity: 0.9
+        opacity: 0.9,
+        wireframe: Math.random() > 0.85
       });
 
       const crystal = new THREE.Mesh(geometry, material);
       
+      // Add a subtle glow aura
+      const auraGeo = new THREE.SphereGeometry(size * 1.5, 16, 16);
+      const auraMat = new THREE.MeshBasicMaterial({
+        color: color,
+        transparent: true,
+        opacity: 0.15,
+        blending: THREE.AdditiveBlending
+      });
+      const aura = new THREE.Mesh(auraGeo, auraMat);
+      crystal.add(aura);
+      
       // Random position in a sphere
       const phi = Math.acos(-1 + (2 * i) / artifacts.length);
       const theta = Math.sqrt(artifacts.length * Math.PI) * phi;
-      const radius = 8 + Math.random() * 2;
+      const radius = 8 + Math.random() * 4;
 
       crystal.position.set(
         radius * Math.cos(theta) * Math.sin(phi),
@@ -286,7 +300,7 @@ const MemoryPalace = ({ theme }) => {
             
             <div className="mb-6">
               <span className="px-3 py-1 bg-amber-500/10 text-amber-500 rounded-full text-[10px] font-bold uppercase tracking-widest border border-amber-500/20 mb-4 inline-block">
-                {selectedNode.type.replace('_', ' ')}
+                {selectedNode.type ? selectedNode.type.replace('_', ' ') : 'Concept'}
               </span>
               <h3 className="text-xl font-bold text-white mb-2 leading-tight">{selectedNode.title}</h3>
               <div className="flex items-center gap-2 text-stone-500 text-xs italic">

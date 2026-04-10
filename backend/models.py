@@ -35,6 +35,7 @@ class LibraryArtifact(Base):
     
     # AI Metadata
     summary = Column(Text, nullable=True)
+    embedding = Column(JSON, nullable=True) # Stores the semantic vector
     sentiment_score = Column(Float, nullable=True)
     sentiment_label = Column(String, nullable=True)
     
@@ -102,6 +103,20 @@ class UserTask(Base):
     priority = Column(Integer, default=1)
     deadline = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+class UserTodo(Base):
+    """Day-to-day simple todo list for behavioral tracking."""
+    __tablename__ = "user_todos"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, index=True)
+    text = Column(String, nullable=False)
+    completed = Column(Boolean, default=False)
+    category = Column(String, default="general") # e.g. "Work", "Personal", "Health"
+    due_date = Column(DateTime, nullable=True)
+    urgency_score = Column(Float, default=0.0)
+    parent_id = Column(String, ForeignKey("user_todos.id"), nullable=True) # For sub-tasks
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
 
 class UserActivity(Base):
     """Active Stream of Life (Browsing, Music, Media)."""

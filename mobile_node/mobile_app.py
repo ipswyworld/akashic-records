@@ -43,11 +43,61 @@ class AkashaMobileAgent:
                     await self.capture_voice()
                 elif user_input.startswith("/run"):
                     await self.execute_mobile_goal(user_input[4:].strip())
+                elif user_input.startswith("/todo"):
+                    await self.handle_todos(user_input)
                 else:
                     await self.ask_archivist(user_input)
 
             except KeyboardInterrupt:
                 break
+
+    async def handle_todos(self, command):
+        parts = command.split()
+        if len(parts) < 2:
+            console.print("[yellow]Usage: /todo [list|add|done] [args][/yellow]")
+            return
+
+        subcmd = parts[1].lower()
+        if subcmd == "list":
+            try:
+                r = requests.get(f"{API_BASE}/todos", headers=self.get_headers())
+                todos = r.json()
+                table = Table(title="Daily Intentions", border_style="cyan")
+                table.add_column("ID", style="dim")
+                table.add_column("Status", justify="center")
+                table.add_column("Intention")
+                table.add_column("Category", style="magenta")
+
+                for t in todos:
+                    status = "[green]✅[/green]" if t['completed'] else "[yellow]⭕[/yellow]"
+                    table.add_row(t['id'][:4], status, t['text'], t['category'])
+                
+                console.print(table)
+            except Exception as e: console.print(f"[red]Sync failed: {e}[/red]")
+
+        elif subcmd == "add":
+            text = " ".join(parts[2:])
+            if not text: return
+            try:
+                r = requests.post(f"{API_BASE}/todos", json={"text": text}, headers=self.get_headers())
+                res = r.json()
+                console.print(f"[green]Captured:[/green] {res['todo']['text']}")
+                if res.get('ego_feedback'):
+                    console.print(f"[italic dim]Archivist: {res['ego_feedback']}[/italic dim]")
+            except Exception as e: console.print(f"[red]Add failed: {e}[/red]")
+
+        elif subcmd == "done":
+            if len(parts) < 3: return
+            tid = parts[2]
+            try:
+                r_list = requests.get(f"{API_BASE}/todos", headers=self.get_headers())
+                target = next((t for t in r_list.json() if t['id'].startswith(tid)), None)
+                if target:
+                    r = requests.patch(f"{API_BASE}/todos/{target['id']}", json={"completed": not target['completed']}, headers=self.get_headers())
+                    console.print(f"[cyan]Todo {tid} updated.[/cyan]")
+                else:
+                    console.print(f"[red]Todo {tid} not found.[/red]")
+            except Exception as e: console.print(f"[red]Update failed: {e}[/red]")
 
     async def ask_archivist(self, query):
         """Standard RAG query via the mobile link."""

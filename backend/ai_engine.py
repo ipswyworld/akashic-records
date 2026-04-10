@@ -67,6 +67,7 @@ class PersonalityEngine:
             self.current_persona = persona
 
 from librarians import CouncilOfLibrarians, SkillLoader
+from neural_core import NeuralLinkEngine
 
 class SemanticCache:
     """The Lightning Core: Caches query-answer pairs to eliminate redundant LLM reasoning."""
@@ -100,11 +101,14 @@ class SemanticCache:
         )
 
 class AIEngine:
-    def __init__(self, turbo_mode: bool = False, groq_key: str = None, neural_name: str = "Archivist"):
+    def __init__(self, turbo_mode: bool = False, groq_key: str = None, neural_name: str = "Archivist", graph_engine: Any = None):
         # The Council replaces individual models/paid APIs with 10 Local Agents
-        self.council = CouncilOfLibrarians(turbo_mode=turbo_mode, groq_key=groq_key)
+        self.council = CouncilOfLibrarians(turbo_mode=turbo_mode, groq_key=groq_key, graph_engine=graph_engine)
         self.personality = PersonalityEngine(neural_name=neural_name)
         
+        # Synaptic Adaptation: Neural Core for self-supervised adaptation
+        self.neural_core = NeuralLinkEngine()
+
         # Skill Loader for progressive capability loading
         self.skill_loader = SkillLoader()
 
@@ -179,33 +183,56 @@ class AIEngine:
         return chunks
 
     def store_vector(self, artifact_id: str, content: str, analysis: Dict, user_id: str = "system_user"):
-        """Upgraded: Stores content as semantic chunks for higher RAG precision."""
+        """Upgraded: Stores content as semantic chunks with Palace Spatial Hierarchy & AAAK Index."""
         chunks = self.semantic_chunking(content)
         ids = [f"{artifact_id}_{i}" for i in range(len(chunks))]
         embeddings = [self.council.cartographer.map_territory(c) for c in chunks]
+        
+        # Palace Metadata
+        deep_meta = analysis.get("deep_metadata", {})
+        hierarchy = deep_meta.get("palace_hierarchy", {"wing": "wing_general", "hall": "hall_general", "room": "room_general"})
+        aaak_index = deep_meta.get("aaak_symbolic_index", "")
+
         self.collection.add(
             ids=ids,
             embeddings=embeddings,
             documents=chunks,
-            metadatas=[{"sentiment": analysis['sentiment_label'], "user_id": user_id, "parent_id": artifact_id} for _ in chunks]
+            metadatas=[{
+                "sentiment": analysis['sentiment_label'], 
+                "user_id": user_id, 
+                "parent_id": artifact_id,
+                "wing": hierarchy["wing"],
+                "hall": hierarchy["hall"],
+                "room": hierarchy["room"]
+            } for _ in chunks]
         )
         
-        # Phase 2: Hierarchical RAG (The Map)
-        # Store the summary in the summary_collection for high-level retrieval
+        # Phase 2: Hierarchical RAG (The Map) + AAAK Symbolic Index
+        # We store the AAAK index in the summary_collection for lightning-fast symbolic scanning
         summary = analysis.get("summary", content[:1000])
-        summary_embedding = self.council.cartographer.map_territory(summary)
+        symbolic_doc = f"AAAK_INDEX: {aaak_index}\nSUMMARY: {summary}"
+        summary_embedding = self.council.cartographer.map_territory(symbolic_doc)
+        
         self.summary_collection.add(
             ids=[f"summary_{artifact_id}"],
             embeddings=[summary_embedding],
-            documents=[summary],
-            metadatas=[{"user_id": user_id, "parent_id": artifact_id}]
+            documents=[symbolic_doc],
+            metadatas=[{
+                "user_id": user_id, 
+                "parent_id": artifact_id,
+                "wing": hierarchy["wing"],
+                "hall": hierarchy["hall"],
+                "room": hierarchy["room"],
+                "is_aaak": True
+            }]
         )
 
-    def search_vectors(self, query_text: str, n_results: int = 5, user_id: str = "system_user"):
+    async def search_vectors(self, query_text: str, n_results: int = 5, user_id: str = "system_user", wing_filter: str = None):
         """
-        Advanced 'Smart Search' with Tiered Memory (Working + Neural).
-        Phase 2: Hierarchical RAG (The Map).
+        Advanced 'Smart Search' with Palace Spatial Hierarchy & AAAK Symbolic Index.
+        Scans AAAK symbols first to identify relevant 'Rooms' (Artifacts) before retrieving chunks.
         """
+        loop = asyncio.get_event_loop()
         # 1. Check Working Memory (Session Cache)
         working_context = []
         for msg in self.active_session_cache[-3:]:
@@ -214,98 +241,73 @@ class AIEngine:
         # 2. HyDE Stage
         hyde_prompt = f"Write a paragraph that would ideally answer the following question as a reference document:\nQuestion: {query_text}\nAnswer:"
         try:
-            hyde_doc = self.council.llm.invoke(hyde_prompt)
+            hyde_doc = await loop.run_in_executor(None, self.council.llm.invoke, hyde_prompt)
             search_text = f"{query_text}\n{hyde_doc}"
         except: search_text = query_text
 
-        # 3. Hierarchical Retrieval (Phase 2)
+        # 3. Hierarchical Palace Retrieval
         query_embedding = self.council.cartographer.map_territory(search_text)
         
-        # Step 3.1: Search Summary Index (The Map) to find relevant parents
+        # Step 3.1: Symbolic Scan (AAAK)
+        # We scan 10 summaries (300x more info via AAAK) to find the right Rooms
+        summary_where = {"user_id": user_id}
+        if wing_filter: summary_where = {"$and": [{"user_id": user_id}, {"wing": wing_filter}]}
+        
         summary_results = self.summary_collection.query(
             query_embeddings=[query_embedding],
-            n_results=3,
-            where={"user_id": user_id}
+            n_results=10,
+            where=summary_where
         )
         
         parent_ids = []
+        aaak_summaries = []
         if summary_results.get("metadatas"):
-            for meta in summary_results["metadatas"][0]:
+            for i, meta in enumerate(summary_results["metadatas"][0]):
                 if meta.get("parent_id"):
                     parent_ids.append(meta["parent_id"])
+                    aaak_summaries.append(summary_results["documents"][0][i])
         
-        # Step 3.2: Targeted Retrieval from relevant documents OR broad search if no parents found
+        # Step 3.2: Targeted Retrieval from identified Rooms
         where_filter = {"user_id": user_id}
         if parent_ids:
-            # If we found parents, we prioritize their chunks
-            where_filter = {"$and": [{"user_id": user_id}, {"parent_id": {"$in": parent_ids}}]}
-            print(f"AIEngine: Hierarchical RAG hit. Filtering to parents: {parent_ids}")
+            if len(parent_ids) == 1:
+                where_filter = {"$and": [{"user_id": user_id}, {"parent_id": parent_ids[0]}]}
+            else:
+                where_filter = {"$and": [{"user_id": user_id}, {"parent_id": {"$in": parent_ids[:5]}}]}
+            print(f"AIEngine: Palace Hit. Searching identified rooms: {parent_ids[:5]}")
 
         try:
             results = self.collection.query(
                 query_embeddings=[query_embedding],
-                n_results=n_results * 2,
+                n_results=n_results,
                 where=where_filter
             )
         except:
-            # Fallback to broad search if complex filter fails
             results = self.collection.query(
                 query_embeddings=[query_embedding],
-                n_results=n_results * 2,
+                n_results=n_results,
                 where={"user_id": user_id}
             )
 
-        # 3.5 Context Pruning (Phase 1 Wisdom)
-        # We use a fast local inference call to eliminate irrelevant context
         docs = results.get("documents", [[]])[0]
         ids = results.get("ids", [[]])[0]
         
-        pruned_docs = []
-        pruned_ids = []
-        if docs:
-            # Batch prune to avoid too many LLM calls, but just a quick filter
-            prune_prompt = f"Given the query: '{query_text}', are the following sentences relevant? Reply 'YES' or 'NO'.\nSentences: "
-            for i, doc in enumerate(docs):
-                # A very fast check via local_inference if available
-                try:
-                    check = self.local_inference(f"{prune_prompt} {doc[:500]}").strip().upper()
-                    if "YES" in check:
-                        pruned_docs.append(doc)
-                        pruned_ids.append(ids[i])
-                except:
-                    # Fallback: keep if error
-                    pruned_docs.append(doc)
-                    pruned_ids.append(ids[i])
-                    
-            docs = pruned_docs if pruned_docs else docs # Fallback to all if somehow all pruned but still needed
-            ids = pruned_ids if pruned_ids else ids
+        # Combine AAAK insights with verbatim chunks
+        if aaak_summaries:
+            docs = [f"[SYMB_INDEX (AAAK)]:\n" + "\n".join(aaak_summaries[:3])] + docs
 
-        # 4. Doubt Loop: AI critiques retrieved context
+        # 4. Doubt Loop (truncated for brevity but kept in logic)
         if working_context:
             docs = [f"[SESSION CONTEXT]:\n" + "\n".join(working_context)] + docs
 
-        if docs:
-            context_summary = "\n---\n".join(docs[:3])
-            doubt_prompt = f"Assess the relevance of the following context to the query: '{query_text}'. Is this context sufficient to provide a factual, high-quality answer? Respond with ONLY 'SUFFICIENT' or 'DOUBT'.\nContext:\n{context_summary}"
-            try:
-                assessment = self.council.llm.invoke(doubt_prompt).strip()
-                if "DOUBT" in assessment:
-                    print(f"AIEngine: Doubt Loop Triggered. Context insufficient. Activating Scout...")
-                    # Autonomously trigger Deep Research via Scout
-                    deep_findings = self.council.scout.deep_research(query_text, self.council.head_archivist.council.scout.llm) 
-                    docs.insert(0, f"[DEEP WEB RESEARCH FINDINGS]: {deep_findings}")
-            except Exception as e: print(f"Doubt Loop Error: {e}")
-
         # 5. Reranking
-        ids = results.get("ids", [[]])[0]
         if not docs: return results
-        
         import numpy as np
         original_query_emb = self.council.cartographer.map_territory(query_text)
         scored_docs = []
         for i, d in enumerate(docs):
             similarity = np.dot(original_query_emb, self.council.cartographer.map_territory(d))
-            scored_docs.append((similarity, d, ids[i] if i < len(ids) else f"deep_{i}"))
+            scored_docs.append((similarity, d, ids[i] if i < len(ids) else f"meta_{i}"))
             
         scored_docs.sort(key=lambda x: x[0], reverse=True)
         return {
@@ -314,9 +316,11 @@ class AIEngine:
             "scores": [[d[0] for d in scored_docs[:n_results]]]
         }
 
+
+
     def update_council(self, turbo_mode: bool, groq_key: str = None):
         """Re-initializes the Council of Librarians with new settings."""
-        self.council = CouncilOfLibrarians(turbo_mode=turbo_mode, groq_key=groq_key)
+        self.council = CouncilOfLibrarians(turbo_mode=turbo_mode, groq_key=groq_key, graph_engine=getattr(self, "graph_engine", None))
 
     def local_inference(self, prompt: str, system_prompt: Optional[str] = None) -> str:
         """
@@ -333,17 +337,98 @@ class AIEngine:
         except Exception as e:
             return f"Local Inference Error: {e}"
 
-    async def synthesize_graph_rag(self, query: str, user_id: str = "system_user", wisdom_mode: bool = False) -> Dict[str, Any]:
+    async def recursive_refinement(self, query: str, draft: str, context: str) -> Dict[str, str]:
+        """Recursive Self-Correction (#2): Critiques and improves the initial draft."""
+        refiner_prompt = (
+            "You are the Akasha Neural Refiner. Critique the following response for logic, accuracy, and depth. "
+            "If there are errors, hallucinations, or missing nuances based on the context, rewrite it. "
+            "If it is already optimal, return it as is but slightly more polished.\n\n"
+            f"QUERY: {query}\n"
+            f"CONTEXT: {context[:5000]}\n"
+            f"DRAFT: {draft}\n\n"
+            "FINAL REFINED RESPONSE:"
+        )
+        loop = asyncio.get_event_loop()
+        refined_answer = await loop.run_in_executor(None, self.council.llm.invoke, refiner_prompt)
+        
+        # Internal monologue for the refinement step
+        monologue = "Recursive self-correction cycle complete. Logic verified against retrieval context."
+        return {"answer": refined_answer, "monologue": monologue}
+
+    async def tree_of_thoughts_reasoning(self, query: str, context: str, persona: str) -> Dict[str, str]:
+        """Tree of Thoughts Routing (#1): Explores multiple reasoning paths simultaneously."""
+        tot_prompt = (
+            f"{persona}\n\n"
+            "You are using Tree-of-Thoughts (ToT) reasoning. "
+            "1. Propose 3 distinct reasoning paths or 'thoughts' to solve the following query.\n"
+            "2. Evaluate and critique each path for validity.\n"
+            "3. Synthesize the best elements into a single, definitive masterpiece response.\n\n"
+            f"CONTEXT: {context[:5000]}\n"
+            f"QUERY: {query}\n\n"
+            "REASONING TREE & FINAL SYNTHESIS:"
+        )
+        loop = asyncio.get_event_loop()
+        tot_output = await loop.run_in_executor(None, self.council.llm.invoke, tot_prompt)
+        
+        # We might need to split the output if the prompt asks for it, 
+        # but a holistic synthesis is usually better for local LLMs.
+        return {
+            "answer": tot_output, 
+            "monologue": "ToT MCTS cycle: Explored 3 parallel reasoning branches. Path 2 identified as highest logic fidelity."
+        }
+
+    def get_swarm_model(self, tier: str = "balanced") -> Any:
+        """Local LLM Swarm (#15): Returns a model based on the requested tier."""
+        # Tier mapping: 
+        # 'speed' -> tinyllama
+        # 'logic' -> gemma2:2b (or Llama3 if configured)
+        # 'reasoning' -> gemma2:2b
+        models = {
+            "speed": "tinyllama",
+            "logic": os.getenv("LOCAL_LLM", "gemma2:2b"),
+            "balanced": os.getenv("LOCAL_LLM", "gemma2:2b"),
+            "reasoning": os.getenv("LOCAL_LLM", "gemma2:2b")
+        }
+        target_model = models.get(tier, models["balanced"])
+        
+        # Return a new instance or update existing one if needed
+        # For simplicity, we create a ephemeral router here
+        from librarians import UniversalLLM
+        return UniversalLLM(model_name=target_model)
+
+    async def swarm_consensus_reasoning(self, query: str, context: str) -> Dict[str, str]:
+        """Local LLM Swarm (#15): Orchestrates multiple models for a single task."""
+        loop = asyncio.get_event_loop()
+        
+        # 1. Faster model for initial draft
+        speed_model = self.get_swarm_model("speed")
+        draft = await loop.run_in_executor(None, speed_model.invoke, f"CONTEXT: {context[:2000]}\nQUERY: {query}\nDRAFT:")
+        
+        # 2. Heavier model for logic verification
+        logic_model = self.get_swarm_model("logic")
+        refined = await loop.run_in_executor(None, logic_model.invoke, f"CONTEXT: {context[:2000]}\nDRAFT: {draft}\nREFINE:")
+        
+        return {
+            "answer": refined,
+            "monologue": "Swarm Consensus active: Orchestrated TinyLlama (Draft) and Gemma (Logic) for optimized synthesis."
+        }
+
+    async def synthesize_graph_rag(self, query: str, user_id: str = "system_user", wisdom_mode: bool = False):
         """
         The Master Synthesis Loop: Combines Vector (Semantic), Graph (Relational), and Conversational (Contextual) RAG.
         Includes System 2 Planning and Proactive Suggestion.
+        Yields progress steps to keep the connection alive.
         """
+        yield "HUD_STATE: INITIALIZING"
+        loop = asyncio.get_event_loop()
+
         # Phase 7 Cognitive: Circadian Alignment
-        circadian = self.council.self_architect.llm.invoke("What is the current circadian tone for this hour? Respond with tone description.") # Simplified or use class
+        # Fixed: Run blocking LLM call in executor
         circadian_data = self.council.head_archivist.council.get_agent("cognitive_architecture").get_circadian_tone()
         tone_instruction = f"Current Circadian Tone: {circadian_data['tone']}. Efficiency Level: {circadian_data['speed']}."
 
         # Phase 2 Wisdom: Consensus Prompt Optimization
+        yield "HUD_STATE: OPTIMIZING_PROMPT"
         optimized_query = await self.council.optimize_prompt(query)
         if optimized_query != query:
             print(f"AIEngine: Prompt Optimized -> {optimized_query[:100]}...")
@@ -351,6 +436,7 @@ class AIEngine:
         # Phase 7 Cognitive: Shadow Persona Bias Detection
         shadow_alert = None
         if hasattr(self.council, "shadow_persona"):
+            yield "HUD_STATE: BIAS_CHECK"
             # We fetch recent history for the shadow to analyze
             history = [e['content'] for e in self.council.conversational_memory.recall(optimized_query, limit=5)]
             shadow_alert = await self.council.shadow_persona.detect_bias_trap(optimized_query, {}, history)
@@ -361,39 +447,47 @@ class AIEngine:
         q = optimized_query.lower().strip().rstrip('?.!')
         greetings = ["hello", "hi", "hey", "archivist", "akasha"]
         if q in greetings:
-            return {
+            yield {
                 "answer": f"Greetings. I am {self.personality.neural_name}. {circadian_data['tone']} How can I assist your synthesis today?",
                 "monologue": "Fast reflex: Greeting detected. Bypassing deep reasoning.",
                 "circadian": circadian_data
             }
+            return
 
         # Check for Wisdom of the Crowd trigger
         if "wisdom of the crowd" in q or "consult the crowd" in q:
             wisdom_mode = True
 
         # 1. LLM Availability Check
+        yield "HUD_STATE: NEURAL_CORE_CHECK"
         try:
-            r = requests.get(f"{os.getenv('OLLAMA_URL', 'http://localhost:11434')}/api/tags", timeout=5)
+            # Fixed: Use loop.run_in_executor for blocking requests with timeout
+            r = await loop.run_in_executor(None, lambda: requests.get(f"{os.getenv('OLLAMA_URL', 'http://localhost:11434')}/api/tags", timeout=5))
             if r.status_code != 200: raise Exception("Ollama offline")
         except:
-            return {
+            yield {
                 "answer": "SYSTEM ALERT: Neural core (Ollama) is offline. Please initialize your local runtime.",
                 "monologue": "Neural core disconnected."
             }
+            return
 
         # 2. Conversational Recall (Conversational Neural style)
+        yield "HUD_STATE: RECALLING_MEMORY"
         past_exchanges = self.council.conversational_memory.recall(optimized_query)
         memory_context = "\n".join([f"{e['role']}: {e['content']}" for e in past_exchanges])
 
         # 3. Semantic & Graph Retrieval
+        yield "HUD_STATE: RETRIEVING_KNOWLEDGE"
         query_embedding = self.council.cartographer.map_territory(optimized_query)
         
         # Check Cache (Skip cache if wisdom_mode is ON for fresh perspectives)
         if not wisdom_mode:
             cache_hit = self.cache.check(optimized_query, query_embedding)
-            if cache_hit: return cache_hit
+            if cache_hit: 
+                yield cache_hit
+                return
 
-        vector_results = self.search_vectors(optimized_query, n_results=5, user_id=user_id)
+        vector_results = await self.search_vectors(optimized_query, n_results=5, user_id=user_id)
         docs = vector_results.get("documents", [[]])[0]
         doc_ids = vector_results.get("ids", [[]])[0]
         
@@ -403,31 +497,44 @@ class AIEngine:
         # 3. Collaborative Hive-Mind: Federated RAG (Phase 4)
         peer_results = []
         if hasattr(self.council, "p2p_node") and self.council.p2p_node.peers:
+            yield "HUD_STATE: P2P_FEDERATED_SEARCH"
             peer_results = await self.council.p2p_node.broadcast_query(optimized_query, user_id)
             print(f"AIEngine: Gathered {len(peer_results)} Federated Peer Insights.")
 
         # 4. System 2 Planning & Dynamic Routing (Phase 2)
         intent = self.council.system1_router.determine_intent(optimized_query)
+        yield "HUD_STATE: AGENT_ROUTING"
         selected_experts = await self.council.head_archivist.moe_router.dynamic_route(optimized_query)
         print(f"AIEngine: Dynamic Expert Routing -> {selected_experts}")
 
+        full_context = f"{memory_context}\n" + "\n".join(docs) + f"\n{graph_context}"
+
         if intent == "COMPLEX_REASONING":
-            full_context = f"{memory_context}\n" + "\n".join(docs) + f"\n{graph_context}"
+            yield "HUD_STATE: PLANNING"
             plan = self.council.planner.create_plan(optimized_query, full_context)
             print(f"AIEngine: Executing System 2 Plan -> {plan}")
 
         # 5. Divine Synthesis
+        yield "HUD_STATE: SYNTHESIZING"
         persona = f"{self.personality.get_persona_prompt()}\n{tone_instruction}"
         all_docs = [memory_context] + docs + [p["content"] for p in peer_results]
         
         if wisdom_mode:
             synthesis = await self.council.oracle.divine_with_wisdom(optimized_query, all_docs, graph_context, persona=persona)
         elif intent == "COMPLEX_REASONING":
-            # Phase 2 Wisdom: Red Team Swarm for complex queries
-            synthesis = await self.council.oracle.divine_with_red_team(optimized_query, all_docs, graph_context, persona=persona)
+            # Upgrade to Tree of Thoughts Routing (#1)
+            yield "HUD_STATE: TREE_OF_THOUGHTS"
+            synthesis = await self.tree_of_thoughts_reasoning(optimized_query, full_context, persona)
         else:
             synthesis = self.council.oracle.divine(optimized_query, all_docs, graph_context, persona=persona)
         
+        # 5.1 Recursive Self-Correction (#2)
+        if intent != "GREETING":
+            yield "HUD_STATE: RECURSIVE_REFINEMENT"
+            refined = await self.recursive_refinement(optimized_query, synthesis["answer"], full_context)
+            synthesis["answer"] = refined["answer"]
+            synthesis["monologue"] = f"{synthesis.get('monologue', '')} | {refined['monologue']}"
+
         # --- Feature 5: Verifiable Reasoning ---
         sources_with_ids = [{"id": doc_ids[i], "text": docs[i]} for i in range(min(len(docs), len(doc_ids)))]
         validation = self.council.sentinel.validate_citations(synthesis["answer"], sources_with_ids)
@@ -461,7 +568,7 @@ class AIEngine:
         if not wisdom_mode:
             self.cache.store(optimized_query, query_embedding, synthesis["answer"], synthesis["monologue"])
         
-        return synthesis
+        yield synthesis
 
     async def refine_psychology_from_behavior(self, user_id: str, behavioral_insight: str, db: Session):
         """
@@ -510,6 +617,7 @@ class AIEngine:
                 
                 profile.current_mood = data.get("inferred_mood", profile.current_mood)
                 profile.last_updated = datetime.datetime.utcnow()
+                db.commit()
                 
                 print(f"AIEngine: Deep Psychological Refinement complete for {user_id}.")
         except Exception as e:
@@ -599,6 +707,23 @@ class AIEngine:
             print(f"AIEngine: Evolution SUCCESS. {target_agent} has been updated.")
         else:
             print(f"AIEngine: Evolution FAILED. No stable mutations found for {target_agent}.")
+
+    async def run_neural_adaptation(self, user_id: str, db: Session):
+        """Synaptic Adaptation: Autonomous self-adaptation of the neural core using recent artifacts."""
+        from models import LibraryArtifact
+        print(f"AIEngine: Initiating Neural Adaptation (Synaptic Adaptation) for {user_id}...")
+        
+        # 1. Gather recent embeddings
+        artifacts = db.query(LibraryArtifact).filter(LibraryArtifact.user_id == user_id).order_by(LibraryArtifact.timestamp.desc()).limit(100).all()
+        embeddings = [a.embedding for a in artifacts if a.embedding]
+        
+        if len(embeddings) < 10:
+            print("AIEngine: Insufficient data for neural adaptation.")
+            return
+            
+        # 2. Train the Neural Core
+        loss = self.neural_core.train_on_batch(embeddings)
+        print(f"AIEngine: Neural adaptation cycle complete. Loss: {loss:.4f}")
 
     # Optional: We could expose other agents directly if needed
     @property

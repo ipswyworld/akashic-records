@@ -139,6 +139,16 @@ class TelemetryRequest(BaseModel):
     content: Optional[str] = None
     user_id: str = "system_user"
 
+class TodoCreate(BaseModel):
+    text: str
+    category: Optional[str] = "general"
+    due_date: Optional[datetime.datetime] = None
+
+class TodoUpdate(BaseModel):
+    completed: Optional[bool] = None
+    text: Optional[str] = None
+    category: Optional[str] = None
+
 # --- Core Logic Helpers ---
 def update_user_psychology(db: Session, user_id: str, analysis: Dict[str, Any], content: str = None):
     """Incrementally updates the user's psychological profile (Ego) based on new thoughts."""
@@ -174,6 +184,10 @@ def update_user_psychology(db: Session, user_id: str, analysis: Dict[str, Any], 
 
 async def ingest_library_artifact(title: str, content: str, artifact_type: str, extra_meta: Dict = None, db: Session = None, user_id: str = "system_user"):
     """Helper function to consolidate ingestion logic. Prevents duplicates via content hash."""
+    from models import KnowledgeEvent, AgentPerformance
+    import time
+    
+    start_time = time.time()
     # 0. Deduplication Check
     b_hash = hashlib.sha256(content.encode()).hexdigest()
     existing = db.query(LibraryArtifact).filter(LibraryArtifact.blockchain_hash == b_hash).first()
@@ -212,6 +226,7 @@ async def ingest_library_artifact(title: str, content: str, artifact_type: str, 
         schema_id=schema_id,
         user_id=user_id,
         summary=analysis["summary"],
+        embedding=analysis["embedding"],
         sentiment_label=analysis["sentiment_label"],
         blockchain_hash=b_hash,
         metadata_json={
@@ -223,6 +238,13 @@ async def ingest_library_artifact(title: str, content: str, artifact_type: str, 
     new_art.encrypt_content()
     try:
         db.add(new_art)
+        # Add Knowledge Event for visibility
+        event = KnowledgeEvent(
+            event_type="ARTIFACT_CREATED",
+            payload={"id": new_art.id, "title": title, "type": artifact_type, "status": "SUCCESS"},
+            user_id=user_id
+        )
+        db.add(event)
         db.commit()
         db.refresh(new_art)
     except Exception as e:
@@ -240,6 +262,18 @@ async def ingest_library_artifact(title: str, content: str, artifact_type: str, 
     graph_engine.create_artifact_node(new_art.id, new_art.title, artifact_type, user_id)
     graph_engine.ingest_triplets(new_art.id, analysis["graph_triplets"], user_id)
     
+    # Record Performance
+    latency = (time.time() - start_time) * 1000
+    perf = AgentPerformance(
+        agent_name="HeadArchivist",
+        task_category="Ingestion",
+        fitness_score=0.95,
+        latency_ms=latency,
+        user_id=user_id
+    )
+    db.add(perf)
+    db.commit()
+
     await manager.broadcast(json.dumps({"event": "NEW_ARTIFACT_INGESTED", "id": new_art.id, "title": new_art.title}))
     return new_art
 
@@ -267,9 +301,10 @@ from models import LibraryArtifact, UserTask, SRSCard, UserActivity, UserSetting
 # Ensure database tables are created
 Base.metadata.create_all(bind=engine)
 
-from ai_engine import AIEngine
+from ai_engine import AIEngine, SemanticCache
+from scripts.clean_artifacts import clean_build_artifacts
 from blockchain_adapter import BlockchainAdapter
-from graph_engine import GraphEngine
+from lightweight_graph import SQLiteGraphEngine
 from p2p_node import P2PNode
 from multimodal_engine import MultimodalEngine
 from privacy_engine import PrivacyEngine
@@ -286,28 +321,28 @@ from akasha_db.core import AkashaLivingDB
 from telemetry_ingest import TelemetryIngestEngine
 from privacy_utils import redactor
 
-def get_initial_ai_engine():
+def get_initial_ai_engine(graph_engine=None):
     db = SessionLocal()
     try:
         settings = db.query(UserSettings).filter(UserSettings.user_id == "system_user").first()
         if settings:
-            return AIEngine(turbo_mode=settings.turbo_mode, groq_key=settings.groq_api_key, neural_name=settings.neural_name)
-        return AIEngine()
+            return AIEngine(turbo_mode=settings.turbo_mode, groq_key=settings.groq_api_key, neural_name=settings.neural_name, graph_engine=graph_engine)
+        return AIEngine(graph_engine=graph_engine)
     finally:
         db.close()
 
 from context_fabric import ContextFabric
 
 # Instantiate Engines
-ai_engine = get_initial_ai_engine()
+blockchain = BlockchainAdapter()
+graph_engine = SQLiteGraphEngine()
+ai_engine = get_initial_ai_engine(graph_engine)
 intel_engine = IntelEngine()
 telemetry_engine = TelemetryIngestEngine()
 p2p_node = P2PNode(intel_engine=intel_engine)
 # Link P2P to Council for Federated RAG
 ai_engine.council.p2p_node = p2p_node
 
-blockchain = BlockchainAdapter()
-graph_engine = GraphEngine()
 fabric = ContextFabric(ai_engine, graph_engine)
 multimodal = MultimodalEngine()
 executive = ActionEngine(ai_engine)
@@ -364,18 +399,25 @@ async def lifespan(app: FastAPI):
     metabolism = AkashaMetabolism(db_living, ai_engine, blockchain, manager, user_id="system_user")
     metabolism_task = asyncio.create_task(metabolism.start_metabolic_cycle())
 
-    # Warm up AI Engine with Digital Ego
-    db = SessionLocal()
-    try:
-        profile = db.query(UserPsychology).filter(UserPsychology.user_id == "system_user").first()
-        if profile:
-            ego_profile = {
-                "ocean_traits": {"openness": profile.openness, "conscientiousness": profile.conscientiousness, "extraversion": profile.extraversion, "agreeableness": profile.agreeableness, "neuroticism": profile.neuroticism},
-                "cognitive_distortions": profile.identified_distortions
-            }
-            ai_engine.warmup_ego(ego_profile)
-    finally:
-        db.close()
+    # Warm up AI Engine with Digital Ego (Non-blocking)
+    async def warmup_task():
+        db = SessionLocal()
+        try:
+            profile = db.query(UserPsychology).filter(UserPsychology.user_id == "system_user").first()
+            if profile:
+                ego_profile = {
+                    "ocean_traits": {"openness": profile.openness, "conscientiousness": profile.conscientiousness, "extraversion": profile.extraversion, "agreeableness": profile.agreeableness, "neuroticism": profile.neuroticism},
+                    "cognitive_distortions": profile.identified_distortions
+                }
+                # Offload blocking LLM call
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, ai_engine.warmup_ego, ego_profile)
+        except Exception as e:
+            print(f"Warmup Error: {e}")
+        finally:
+            db.close()
+
+    asyncio.create_task(warmup_task())
 
     # Start MCP Directory Watcher
     watch_path = os.path.join(os.getcwd(), "akasha_data", "watch")
@@ -388,6 +430,7 @@ async def lifespan(app: FastAPI):
         sent_alerts = set()
         last_observer_run = datetime.datetime.min
         last_behavioral_mining = datetime.datetime.min
+        last_evolution_run = datetime.datetime.min
         last_reflection_day = -1
         try:
             while True:
@@ -406,7 +449,7 @@ async def lifespan(app: FastAPI):
                     last_behavioral_mining = now
 
                 # Autonomous Evolution Cycle (Every 24 hours)
-                if now - last_observer_run > datetime.timedelta(hours=24):
+                if now - last_evolution_run > datetime.timedelta(hours=24):
                     db = SessionLocal()
                     try:
                         await ai_engine.run_autonomous_evolution("system_user", db)
@@ -429,7 +472,9 @@ async def lifespan(app: FastAPI):
                         db.commit()
                         # ---------------------------------------
                         
-                    finally: db.close()
+                    finally: 
+                        db.close()
+                        last_evolution_run = now
 
                 # Seer: Morning Prediction (Every 24 hours at 8 AM)
                 if now.hour == 8 and last_reflection_day != now.day:
@@ -512,20 +557,128 @@ async def poll_rss_feeds_background():
         print(f"Background Task Error: {e}")
 
 async def run_synthetic_dream_loop():
-    """Synthetic Thought Loop: Agents 'dream' and find serendipitous connections (Idea 4)."""
-    # ... logic omitted for brevity ...
-    pass
+    """Synthetic Thought Loop (#5): Agents 'dream' and find serendipitous connections."""
+    print(f"[{datetime.datetime.utcnow()}] Neural Core: Entering Synthetic Dream Phase...")
+    db = SessionLocal()
+    try:
+        # 1. Pick two random artifacts from the library
+        from models import LibraryArtifact
+        import random
+        count = db.query(LibraryArtifact).count()
+        if count < 2: return
+        
+        indices = random.sample(range(count), 2)
+        arts = [db.query(LibraryArtifact).offset(idx).first() for idx in indices]
+        
+        # 2. Ask the Oracle to find a novel connection
+        dream_prompt = (
+            "You are the Akasha Neural Dreamer. Below are two unrelated pieces of knowledge from the user's library. "
+            "Synthesize a novel, profound connection between them. What does this reveal about the user's goals or the nature of knowledge?\n\n"
+            f"Artifact A: {arts[0].title} - {arts[0].content[:500]}\n\n"
+            f"Artifact B: {arts[1].title} - {arts[1].content[:500]}\n\n"
+            "SYNTHETIC INSIGHT:"
+        )
+        
+        loop = asyncio.get_event_loop()
+        insight = await loop.run_in_executor(None, ai_engine.council.llm.invoke, dream_prompt)
+        
+        # 3. Store as a new artifact
+        new_art = LibraryArtifact(
+            title=f"Synthetic Dream: {arts[0].title} x {arts[1].title}",
+            content=insight,
+            artifact_type="synthetic_dream",
+            user_id="system_user"
+        )
+        db.add(new_art)
+        db.commit()
+        db.refresh(new_art)
+        
+        # 4. Index it
+        analysis = ai_engine.analyze_artifact(new_art.content)
+        ai_engine.store_vector(new_art.id, new_art.content, analysis, user_id="system_user")
+        
+        print(f"Neural Core: Dream Phase complete. New insight forged: {new_art.title}")
+        
+    except Exception as e:
+        print(f"Dream Loop Error: {e}")
+    finally:
+        db.close()
 
 async def system_maintenance_task():
-    """Background: Periodic system health check and backup."""
+    """Background: Periodic system health check, backup, and catabolism."""
     from scripts.health_check import check_health
     from scripts.backup_vault import backup_vault
+    from sqlalchemy import text
+    import datetime
+    
     print(f"[{datetime.datetime.utcnow()}] Background: Running system maintenance...")
+    
+    # 1. Health Check & Backup
     check_health()
     backup_vault()
+    
+    # 2. Chronos Storage Maintenance (SQLite)
+    await chronos.storage_maintenance("system_user")
+    
+    # 3. SQLite Database Compaction
+    db = SessionLocal()
+    try:
+        db.execute(text("VACUUM"))
+        print("Main DB: VACUUM complete.")
+    except Exception as e:
+        print(f"Main DB: VACUUM failed: {e}")
+    finally:
+        db.close()
+        
+    # 4. ChromaDB Pruning (Semantic Cache)
+    try:
+        cache_collection = ai_engine.chroma_client.get_collection("semantic_cache")
+        # Prune entries older than 30 days
+        # ChromaDB doesn't support complex where filters on metadata dates easily without parsing
+        # Simple approach: If cache gets too large, clear it or prune by count
+        count = cache_collection.count()
+        if count > 1000:
+            print(f"ChromaDB: Pruning semantic_cache ({count} entries)...")
+            # For simplicity, we clear cache if it exceeds 1000 entries
+            # A more surgical prune would require metadata timestamp filtering
+            ai_engine.chroma_client.delete_collection("semantic_cache")
+            ai_engine.cache = SemanticCache(ai_engine.chroma_client)
+    except Exception as e:
+        print(f"ChromaDB: Cache pruning failed: {e}")
+        
+    # 5. Clean Build Artifacts
+    try:
+        clean_build_artifacts()
+    except Exception as e:
+        print(f"Cleanup: Artifact cleaning failed: {e}")
 
 app = FastAPI(title="Akasha Universal Library", description="The Omnipresent Knowledge Graph & Library", lifespan=lifespan)
 app.state.ai_engine = ai_engine
+
+class BiometricData(BaseModel):
+    heart_rate: float
+    stress_level: Optional[float] = None
+    user_id: str = "system_user"
+
+@app.post("/telemetry/biometrics")
+async def log_biometrics(data: BiometricData, db: Session = Depends(get_db)):
+    """Biometric Feedback Loops (#13): Modulates AI personality based on user's physical state."""
+    # 1. Log to activity
+    telemetry_engine.log_activity(db, data.user_id, {
+        "type": "BIOMETRIC_UPDATE",
+        "heart_rate": data.heart_rate,
+        "stress_level": data.stress_level
+    })
+    
+    # 2. Modulate Digital Ego in real-time
+    if data.heart_rate > 100:
+        # High stress: Make AI more concise and calming
+        ai_engine.personality.current_persona = "Minimalist"
+        print(f"Biometrics: User stress detected ({data.heart_rate} BPM). Switching to Minimalist/Calm mode.")
+    else:
+        ai_engine.personality.current_persona = "Archivist"
+        
+    return {"status": "BIOMETRICS_PROCESSED", "heart_rate": data.heart_rate}
 
 scheduler = AsyncIOScheduler()
 scheduler.add_job(poll_rss_feeds_background, 'interval', minutes=30)
@@ -560,9 +713,13 @@ async def get_morning_briefing(current_user: User = Depends(get_current_user), d
 async def get_evolution_analytics(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Provides data for the Visual Evolution Timeline."""
     from models import AgentPerformance, NeuralSkill
+    from datetime import datetime, timedelta
     
     # 1. Fetch Performance Trends
     performances = db.query(AgentPerformance).filter(AgentPerformance.user_id == current_user.id).order_by(AgentPerformance.timestamp.asc()).all()
+    
+    # 2. Fetch Skills
+    skills = db.query(NeuralSkill).filter(NeuralSkill.user_id == current_user.id).all()
     
     # If no performances, provide mock starting metrics
     if not performances:
@@ -581,6 +738,9 @@ async def get_evolution_analytics(current_user: User = Depends(get_current_user)
                 "category": p.task_category
             } for p in performances
         ]
+    
+    return {
+        "performance_history": performance_history,
         "forged_skills": [
             {
                 "name": s.name, 
@@ -652,6 +812,218 @@ async def toggle_p2p_stealth(request: P2PStealthRequest):
     await p2p_node.set_stealth_mode(request.enabled)
     return {"status": "SUCCESS", "is_stealth": p2p_node.is_stealth}
 
+# --- Todo Endpoints ---
+
+@app.get("/todos")
+async def list_todos(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    from models import UserTodo
+    return db.query(UserTodo).filter(UserTodo.user_id == current_user.id).order_by(UserTodo.created_at.desc()).all()
+
+async def index_todo_background(todo_id: str, user_id: str):
+    """Heavy neural indexing and ego feedback generation offloaded to background."""
+    db = SessionLocal()
+    try:
+        from models import UserTodo, LibraryArtifact, UserPsychology
+        todo = db.query(UserTodo).filter(UserTodo.id == todo_id).first()
+        if not todo: return
+
+        # --- Pillar 1 Deep Link: Neural Seed ---
+        artifact = LibraryArtifact(
+            title=f"Intention: {todo.text[:50]}",
+            content=f"User committed to a new intention: {todo.text}. Category: {todo.category}.",
+            artifact_type="intention",
+            user_id=user_id
+        )
+        db.add(artifact)
+        db.commit()
+        db.refresh(artifact)
+        
+        # Offload blocking calls to executor
+        loop = asyncio.get_event_loop()
+        analysis = await loop.run_in_executor(None, ai_engine.analyze_artifact, artifact.content)
+        analysis["deep_metadata"]["palace_hierarchy"] = {"wing": "wing_intentions", "hall": "hall_todos", "room": todo.category}
+        
+        await loop.run_in_executor(None, ai_engine.store_vector, artifact.id, artifact.content, analysis, user_id)
+        
+        # --- Digital Ego Feedback (Stored in a KnowledgeEvent for UI to pick up) ---
+        profile = db.query(UserPsychology).filter(UserPsychology.user_id == user_id).first()
+        if profile:
+            feedback_prompt = f"Given a user with OCEAN traits {profile.openness} openness and {profile.conscientiousness} conscientiousness, provide a 1-sentence supportive reaction to their new intention: '{todo.text}'."
+            ego_msg = await ai_engine.council.llm.ainvoke(feedback_prompt)
+            
+            from models import KnowledgeEvent
+            event = KnowledgeEvent(
+                event_type="TODO_FEEDBACK",
+                payload={"todo_id": todo_id, "feedback": ego_msg.strip()},
+                user_id=user_id
+            )
+            db.add(event)
+            db.commit()
+            
+    except Exception as e:
+        print(f"Background Todo Error: {e}")
+    finally:
+        db.close()
+
+@app.post("/todos")
+async def create_todo(todo: TodoCreate, background_tasks: BackgroundTasks, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    from models import UserTodo
+    new_todo = UserTodo(
+        user_id=current_user.id,
+        text=todo.text,
+        category=todo.category,
+        due_date=todo.due_date
+    )
+    db.add(new_todo)
+    db.commit()
+    db.refresh(new_todo)
+
+    # Offload neural parts to background
+    background_tasks.add_task(index_todo_background, new_todo.id, current_user.id)
+
+    return {"todo": new_todo, "ego_feedback": "Neural core is processing your intention..."}
+
+@app.post("/todos/{todo_id}/strategize")
+async def strategize_todo(todo_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    from models import UserTodo
+    todo = db.query(UserTodo).filter(UserTodo.id == todo_id, UserTodo.user_id == current_user.id).first()
+    if not todo: raise HTTPException(status_code=404, detail="Todo not found")
+    
+    # 1. Search library for context
+    context = await ai_engine.search_vectors(todo.text, n_results=3, user_id=current_user.id)
+    docs = context.get("documents", [[]])[0]
+    
+    # 2. Get Circadian Tone
+    circadian = ai_engine.council.cognitive_architecture.get_circadian_tone()
+    
+    # 3. Formulate Strategy
+    prompt = (
+        f"Strategize this intention: '{todo.text}'.\n"
+        f"Neural Context: {docs}\n"
+        f"Circadian Tone: {circadian['tone']}\n"
+        "Provide a 2-sentence 'Neural Strategy' that is profound and actionable."
+    )
+    # Using ainvoke to avoid blocking the loop
+    strategy = await ai_engine.council.llm.ainvoke(prompt)
+    
+    return {"strategy": strategy.strip(), "circadian": circadian}
+
+@app.post("/todos/{todo_id}/decompose")
+async def decompose_todo(todo_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Breaks a task into actionable sub-tasks using the Oracle."""
+    from models import UserTodo
+    parent = db.query(UserTodo).filter(UserTodo.id == todo_id, UserTodo.user_id == current_user.id).first()
+    if not parent: raise HTTPException(status_code=404, detail="Todo not found")
+    
+    prompt = f"Break down this intention into 3 concrete, actionable sub-steps: '{parent.text}'. Return ONLY a JSON list of strings."
+    raw = await ai_engine.council.llm.ainvoke(prompt)
+    try:
+        import json, re
+        match = re.search(r'\[.*\]', raw, re.DOTALL)
+        steps = json.loads(match.group()) if match else []
+        
+        created_steps = []
+        for step_text in steps:
+            new_step = UserTodo(
+                user_id=current_user.id,
+                text=step_text,
+                category=parent.category,
+                parent_id=parent.id
+            )
+            db.add(new_step)
+            created_steps.append(new_step)
+        
+        db.commit()
+        for s in created_steps: db.refresh(s)
+        return created_steps
+    except Exception as e:
+        print(f"Decomposition Error: {e}")
+        return []
+
+@app.get("/todos/harvest")
+async def harvest_intentions(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Scans recent library artifacts for implied intentions."""
+    from models import LibraryArtifact
+    recent = db.query(LibraryArtifact).filter(LibraryArtifact.user_id == current_user.id).order_by(LibraryArtifact.timestamp.desc()).limit(5).all()
+    if not recent: return []
+    
+    context = "\n".join([f"Title: {a.title}\nContent: {a.content[:500]}" for a in recent])
+    prompt = f"Identify 3 potential 'Daily Intentions' the user might want to add based on their recent library activity:\n{context}\nReturn ONLY a JSON list of objects with 'text' and 'category' keys."
+    
+    raw = await ai_engine.council.llm.ainvoke(prompt)
+    try:
+        import json, re
+        match = re.search(r'\[.*\]', raw, re.DOTALL)
+        suggestions = json.loads(match.group()) if match else []
+        return suggestions
+    except: return []
+
+@app.get("/analytics/training/status")
+async def get_training_status(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Provides visibility into what data is being trained and agent performance."""
+    from models import KnowledgeEvent, AgentPerformance
+    
+    # Get recent ingestion and training events
+    recent_events = db.query(KnowledgeEvent).filter(
+        KnowledgeEvent.user_id == current_user.id,
+        KnowledgeEvent.event_type.in_(["ARTIFACT_CREATED", "INGESTION_PROGRESS", "TRAINING_STARTED"])
+    ).order_by(KnowledgeEvent.timestamp.desc()).limit(20).all()
+    
+    # Get agent performance metrics
+    performances = db.query(AgentPerformance).filter(
+        AgentPerformance.user_id == current_user.id
+    ).order_by(AgentPerformance.timestamp.desc()).limit(20).all()
+    
+    return {
+        "recent_data_ingested": [
+            {"type": e.event_type, "payload": e.payload, "timestamp": e.timestamp} 
+            for e in recent_events
+        ],
+        "agent_performance": [
+            {"agent": p.agent_name, "fitness": p.fitness_score, "latency": p.latency_ms, "task": p.task_category, "timestamp": p.timestamp}
+            for p in performances
+        ]
+    }
+
+@app.patch("/todos/{todo_id}")
+async def update_todo(todo_id: str, todo_update: TodoUpdate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    from models import UserTodo
+    db_todo = db.query(UserTodo).filter(UserTodo.id == todo_id, UserTodo.user_id == current_user.id).first()
+    if not db_todo:
+        raise HTTPException(status_code=404, detail="Todo not found")
+    
+    was_already_completed = db_todo.completed
+    if todo_update.completed is not None:
+        db_todo.completed = todo_update.completed
+        if db_todo.completed:
+            db_todo.completed_at = datetime.datetime.utcnow()
+            
+            # --- Pillar 2 Deep Link: Digital Ego (Cognitive Harvest) ---
+            # If a task is COMPLETED, we refine the Digital Ego based on this achievement
+            if not was_already_completed:
+                insight = f"User successfully completed the task: '{db_todo.text}' in category '{db_todo.category}'."
+                asyncio.create_task(ai_engine.refine_psychology_from_behavior(current_user.id, insight, db))
+        else:
+            db_todo.completed_at = None
+            
+    if todo_update.text: db_todo.text = todo_update.text
+    if todo_update.category: db_todo.category = todo_update.category
+    
+    db.commit()
+    db.refresh(db_todo)
+    return db_todo
+
+@app.delete("/todos/{todo_id}")
+async def delete_todo(todo_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    from models import UserTodo
+    db_todo = db.query(UserTodo).filter(UserTodo.id == todo_id, UserTodo.user_id == current_user.id).first()
+    if not db_todo:
+        raise HTTPException(status_code=404, detail="Todo not found")
+    
+    db.delete(db_todo)
+    db.commit()
+    return {"status": "SUCCESS"}
+
 # --- Analytics & Graph Endpoints ---
 
 @app.get("/analytics/graph/topology")
@@ -712,25 +1084,31 @@ async def stream_query(request: QueryRequest, current_user: User = Depends(get_c
         
         # Phase 1 Wisdom: Streaming Reasoning (System 2 HUD)
         try:
-            synthesis = await ai_engine.synthesize_graph_rag(request.query, current_user.id, wisdom_mode=request.wisdom_mode)
+            # yield initial thought to signal activity
+            yield f"<thought>\nInitializing neural pathways...\n"
             
-            # Stream the internal monologue first
-            monologue = synthesis.get("monologue", "")
-            if monologue:
-                yield f"<thought>\n"
-                for word in monologue.split():
-                    yield f"{word} "
-                    await asyncio.sleep(0.01)
-                yield f"\n</thought>\n\n"
-            
-            # Stream the final answer
-            full_answer = synthesis.get("answer", "")
-            for word in full_answer.split():
-                yield f"{word} "
-                await asyncio.sleep(0.01)
+            async for step in ai_engine.synthesize_graph_rag(request.query, current_user.id, wisdom_mode=request.wisdom_mode):
+                if isinstance(step, str):
+                    # Progress update
+                    yield f"Step: {step.replace('HUD_STATE: ', '')}...\n"
+                else:
+                    # Final synthesis
+                    synthesis = step
+                    yield f"Analysis complete.\n</thought>\n\n"
+                    
+                    # Stream the internal monologue if present
+                    monologue = synthesis.get("monologue", "")
+                    if monologue:
+                        yield f"*{monologue}*\n\n"
+                    
+                    # Stream the final answer
+                    full_answer = synthesis.get("answer", "")
+                    for word in full_answer.split():
+                        yield f"{word} "
+                        await asyncio.sleep(0.01)
                 
         except Exception as e:
-            yield f"TRANSCRIPTION_ERROR: {str(e)}"
+            yield f"\n\nTRANSCRIPTION_ERROR: {str(e)}"
     return StreamingResponse(response_generator(), media_type="text/plain")
 
 @app.post("/query/rag")
@@ -852,13 +1230,24 @@ async def process_batch_ingestion(files_data: List[Dict[str, str]], user_id: str
                         continue
 
                     # 2. Progress Update
+                    detail_msg = f"Ingesting chunk {idx + 1}/{total_chunks}..."
                     await manager.broadcast(json.dumps({
                         "event": "INGESTION_PROGRESS",
                         "filename": filename,
                         "status": "PROCESSING",
-                        "detail": f"Ingesting chunk {idx + 1}/{total_chunks}...",
+                        "detail": detail_msg,
                         "count": idx + 1
                     }))
+                    
+                    # Record Event for Dashboard
+                    from models import KnowledgeEvent
+                    event = KnowledgeEvent(
+                        event_type="INGESTION_PROGRESS",
+                        payload={"filename": filename, "status": "PROCESSING", "detail": detail_msg, "count": idx + 1, "total": total_chunks},
+                        user_id=user_id
+                    )
+                    db.add(event)
+                    db.commit()
 
                     # 3. Deep Analysis & Storage (Heavy AI/DB)
                     await ingest_library_artifact(data["title"], data["content"], data["artifact_type"], data["metadata"], db, user_id)
@@ -926,6 +1315,122 @@ class SpecializationRequest(BaseModel):
     folder_path: str
     user_id: Optional[str] = "system_user"
 
+class RetrainRequest(BaseModel):
+    artifact_ids: Optional[List[str]] = None
+    all_artifacts: bool = False
+    user_id: Optional[str] = "system_user"
+
+@app.post("/user/training/retrain")
+async def retrain_artifacts(request: RetrainRequest, background_tasks: BackgroundTasks, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Re-processes existing artifacts to update neural indexing and show activity on dashboard."""
+    # Just get the IDs in the request thread to avoid detachment issues
+    query = db.query(LibraryArtifact.id).filter(LibraryArtifact.user_id == current_user.id)
+    if not request.all_artifacts and request.artifact_ids:
+        query = query.filter(LibraryArtifact.id.in_(request.artifact_ids))
+    
+    artifact_ids = [r[0] for r in query.all()]
+    if not artifact_ids:
+        return {"status": "ERROR", "message": "No artifacts found to retrain."}
+
+    # Record training start
+    from models import KnowledgeEvent
+    event = KnowledgeEvent(
+        event_type="TRAINING_STARTED",
+        payload={"agent": "HeadArchivist", "dataset": "Existing Library", "file_count": len(artifact_ids)},
+        user_id=current_user.id
+    )
+    db.add(event)
+    db.commit()
+
+    async def process_retrain_safe(ids_to_process: List[str], user_id: str):
+        # Create a fresh session for the background thread
+        retrain_db = SessionLocal()
+        try:
+            total = len(ids_to_process)
+            for idx, art_id in enumerate(ids_to_process):
+                try:
+                    # Fetch fresh object in this session
+                    art = retrain_db.query(LibraryArtifact).filter(LibraryArtifact.id == art_id).first()
+                    if not art: continue
+
+                    detail_msg = f"Neural recalibration of '{art.title}' ({idx + 1}/{total})"
+                    await manager.broadcast(json.dumps({
+                        "event": "INGESTION_PROGRESS",
+                        "filename": art.title,
+                        "status": "PROCESSING",
+                        "detail": detail_msg,
+                        "count": idx + 1
+                    }))
+                    
+                    # Record In-Progress Event to DB immediately
+                    progress_event = KnowledgeEvent(
+                        event_type="INGESTION_PROGRESS",
+                        payload={"filename": art.title, "status": "PROCESSING", "detail": detail_msg, "count": idx + 1, "total": total},
+                        user_id=user_id
+                    )
+                    retrain_db.add(progress_event)
+                    retrain_db.commit()
+
+                    try:
+                        art.decrypt_content()
+                    except Exception as dec_err:
+                        print(f"Retrain Decrypt Warning for {art.title}: {dec_err}")
+                    
+                    # Re-analyze (Heavy AI)
+                    loop = asyncio.get_event_loop()
+                    try:
+                        analysis = await loop.run_in_executor(None, ai_engine.analyze_artifact, art.content)
+                        
+                        # Update vector and graph
+                        await loop.run_in_executor(None, ai_engine.store_vector, art.id, art.content, analysis, user_id)
+                        graph_engine.create_artifact_node(art.id, art.title, art.artifact_type, user_id)
+                        graph_engine.ingest_triplets(art.id, analysis["graph_triplets"], user_id)
+                        
+                        # Record performance for dashboard
+                        from models import AgentPerformance
+                        perf = AgentPerformance(
+                            agent_name="HeadArchivist",
+                            task_category="Retraining",
+                            fitness_score=0.99,
+                            latency_ms=150,
+                            user_id=user_id
+                        )
+                        retrain_db.add(perf)
+                        
+                        # Update the artifact summary
+                        art.summary = analysis["summary"]
+                        status_str = "SUCCESS"
+                        final_detail = "Neural recalibration complete"
+                    except Exception as ai_err:
+                        print(f"Retrain AI Error for {art.title}: {ai_err}")
+                        status_str = "ERROR"
+                        final_detail = f"AI Error: {str(ai_err)[:100]}"
+
+                    # Record Final Event
+                    k_event = KnowledgeEvent(
+                        event_type="INGESTION_PROGRESS",
+                        payload={"filename": art.title, "status": status_str, "detail": final_detail, "count": idx + 1, "total": total},
+                        user_id=user_id
+                    )
+                    retrain_db.add(k_event)
+                    retrain_db.commit()
+                except Exception as loop_err:
+                    print(f"Retrain Loop Item Error: {loop_err}")
+                    retrain_db.rollback()
+
+            await manager.broadcast(json.dumps({
+                "event": "INGESTION_PROGRESS",
+                "status": "SUCCESS",
+                "detail": "Library-wide neural recalibration complete."
+            }))
+        except Exception as e:
+            print(f"Retrain Fatal Error: {e}")
+        finally:
+            retrain_db.close()
+
+    background_tasks.add_task(process_retrain_safe, artifact_ids, current_user.id)
+    return {"status": "RETRAIN_QUEUED", "count": len(artifact_ids)}
+
 @app.post("/user/training/specialize")
 async def train_specialist(request: SpecializationRequest, background_tasks: BackgroundTasks, current_user: User = Depends(get_current_user)):
     """Universal training endpoint to specialize an agent on a specific dataset."""
@@ -946,6 +1451,20 @@ async def train_specialist(request: SpecializationRequest, background_tasks: Bac
             
     if not all_files:
         return {"status": "ERROR", "message": f"No processable files found in {request.folder_path}."}
+
+    # Record training start event
+    from models import KnowledgeEvent
+    db = SessionLocal()
+    try:
+        event = KnowledgeEvent(
+            event_type="TRAINING_STARTED",
+            payload={"agent": request.agent_name, "dataset": request.folder_path, "file_count": len(all_files)},
+            user_id=current_user.id
+        )
+        db.add(event)
+        db.commit()
+    finally:
+        db.close()
 
     background_tasks.add_task(process_batch_ingestion, all_files, current_user.id, False)
     
@@ -988,16 +1507,31 @@ async def akasha_sensory_stream(websocket: WebSocket, token: Optional[str] = Non
             db.close()
 
     print(f"Sensory: Unified stream opened for user {user_id}")
-    db = SessionLocal()
-    settings = db.query(UserSettings).filter(UserSettings.user_id == user_id).first()
-    
+    db_stream = SessionLocal()
     try:
+        settings = db_stream.query(UserSettings).filter(UserSettings.user_id == user_id).first()
+        
         while True:
             # Handle both text (transcript) and bytes (visual context)
-            message = await websocket.receive()
+            try:
+                message = await websocket.receive()
+            except WebSocketDisconnect:
+                print(f"Sensory: WebSocket disconnected for user {user_id}")
+                break
+            except Exception as e:
+                print(f"Sensory Receive Error: {e}")
+                break
             
+            if message["type"] == "websocket.disconnect":
+                print(f"Sensory: WebSocket disconnected for user {user_id}")
+                break
+
             if "text" in message:
-                data = json.loads(message["text"])
+                try:
+                    data = json.loads(message["text"])
+                except:
+                    continue
+                    
                 if data.get("type") == "TRANSCRIPT":
                     transcript = data.get("payload", "")
                     print(f"Sensory: Captured Voice -> '{transcript}'")
@@ -1021,9 +1555,14 @@ async def akasha_sensory_stream(websocket: WebSocket, token: Optional[str] = Non
                         if is_wake:
                             print(f"Sensory: Wake Word Detected. Executing -> {command}")
                             await websocket.send_json({"type": "HUD_MORPH", "intent": "SYNTHESIS"})
-                            synthesis = await ai_engine.synthesize_graph_rag(command, user_id=user_id)
-                            response_text = synthesis["answer"]
-                            monologue = synthesis.get("monologue", "")
+                            # Fixed: synthesize_graph_rag is a generator now
+                            synthesis_result = {"answer": "", "monologue": ""}
+                            async for step in ai_engine.synthesize_graph_rag(command, user_id=user_id):
+                                if not isinstance(step, str):
+                                    synthesis_result = step
+                            
+                            response_text = synthesis_result["answer"]
+                            monologue = synthesis_result.get("monologue", "")
                         else:
                             await websocket.send_json({"type": "PASSIVE_TRANSCRIPT", "payload": transcript})
                             continue
@@ -1048,13 +1587,11 @@ async def akasha_sensory_stream(websocket: WebSocket, token: Optional[str] = Non
                 description = multimodal.visual_reasoning(data)
                 await websocket.send_json({"type": "VISUAL_CONTEXT", "payload": description})
 
-    except WebSocketDisconnect:
-        manager.disconnect(websocket)
     except Exception as e:
-        print(f"Sensory WebSocket Error: {e}")
-        manager.disconnect(websocket)
+        print(f"Sensory WebSocket Outer Error: {e}")
     finally:
-        db.close()
+        manager.disconnect(websocket)
+        db_stream.close()
 
 @app.post("/user/settings")
 async def update_settings(settings: Dict[str, Any], current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -1139,6 +1676,38 @@ async def run_interpreter(request: InterpreterRequest, current_user: User = Depe
 @app.post("/actions/run")
 async def run_action_goal(request: ActionGoalRequest, current_user: User = Depends(get_current_user)):
     results = await executive.run_action_loop(request.goal, {"user_id": current_user.id})
+    
+    # --- Feature 3: Hermes-Style Autonomous Skill Library ---
+    # If the action sequence involved multiple steps, distill it into a reusable 'NeuralSkill'
+    history = executive.get_history()
+    if history and len(history) > 1:
+        # Offload distillation to background to not block the response
+        async def background_skill_distillation(goal: str, action_history: List[Dict], user_id: str):
+            db_bg = SessionLocal()
+            try:
+                skill_data = await ai_engine.council.self_architect.distill_to_skill(goal, action_history)
+                if skill_data:
+                    from models import NeuralSkill
+                    skill = NeuralSkill(
+                        name=skill_data["name"],
+                        description=skill_data["description"],
+                        code=skill_data["code"],
+                        user_id=user_id
+                    )
+                    db_bg.add(skill)
+                    db_bg.commit()
+                    print(f"Hermes Logic: Synthesized new persistent skill '{skill.name}'.")
+                    await manager.broadcast(json.dumps({
+                        "type": "SKILL_CREATED", 
+                        "payload": {"name": skill.name, "description": skill.description}
+                    }))
+            except Exception as e:
+                print(f"Skill Distillation Error: {e}")
+            finally:
+                db_bg.close()
+        
+        asyncio.create_task(background_skill_distillation(request.goal, history.copy(), current_user.id))
+
     return {"results": results}
 
 from finance_engine import FinanceEngine
@@ -1146,12 +1715,10 @@ finance_engine = FinanceEngine(ai_engine)
 
 from eye_engine import EyeEngine
 from env_sensor import EnvironmentalSensor
-from learning_engine import LearningEngine
 from backup_engine import BackupEngine
 
 eye_engine = EyeEngine(ai_engine, multimodal)
 env_sensor = EnvironmentalSensor()
-learning_engine = LearningEngine(ai_engine)
 backup_engine = BackupEngine()
 
 @app.post("/eye/toggle")
@@ -1167,14 +1734,6 @@ async def eye_pulse(current_user: User = Depends(get_current_user)):
 @app.get("/env/context")
 async def get_env_context():
     return env_sensor.detect_all()
-
-@app.post("/tutor/syllabus")
-async def generate_syllabus(artifact_ids: List[str], current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    return learning_engine.generate_syllabus(artifact_ids, db)
-
-@app.get("/tutor/quiz/{artifact_id}")
-async def generate_quiz(artifact_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    return learning_engine.generate_quiz(artifact_id, db)
 
 @app.post("/backup/create")
 async def create_backup(current_user: User = Depends(get_current_user)):
@@ -1220,15 +1779,27 @@ class ProactiveRequest(BaseModel):
 @app.post("/proactive/critique")
 async def proactive_critique(request: ProactiveRequest, current_user: User = Depends(get_current_user)):
     """Phase 6: Real-time 'Vision' HUD: Proactively critiques what the user is reading."""
-    print(f"Vision HUD: Proactively critiquing '{request.title}'...")
+    # 0. Fast Reject for junk content
+    content_len = len(request.content.strip())
+    if content_len < 300 or not request.title.strip():
+        return {
+            "title": request.title,
+            "logic_critique": "Insufficient context for deep analysis.",
+            "bias_critique": "None detected in transient page.",
+            "crowd_wisdom": "The Council awaits more profound data.",
+            "crowd_confidence": 0.0
+        }
+
+    print(f"Vision HUD: Proactively critiquing '{request.title}' ({content_len} chars)...")
     
     # 1. Gather wisdom from multiple perspectives
-    logic_critique = ai_engine.council.scholar.analyze_logic(request.content)
-    bias_critique = ai_engine.council.sentinel.critique(request.content)
+    # Optimization: Use speed model for base critiques
+    logic_critique = ai_engine.council.scholar.analyze_logic(request.content[:2000])
+    bias_critique = ai_engine.council.sentinel.critique(request.content[:2000])
     
-    # 2. Consult the crowd for a deep synthesis
-    crowd_query = f"Critique the following article for depth, truth, and perspective.\nTitle: {request.title}\nContent: {request.content[:2000]}"
-    crowd_result = await ai_engine.council.crowd_engine.consult_crowd(crowd_query, context=request.content[:1000])
+    # 2. Consult the crowd for a deep synthesis (Lighter crowd for HUD)
+    crowd_query = f"Critique the following article for depth, truth, and perspective.\nTitle: {request.title}\nContent: {request.content[:1500]}"
+    crowd_result = await ai_engine.council.crowd_engine.consult_crowd(crowd_query, context=request.content[:1000], crowd_size=3)
     
     return {
         "title": request.title,

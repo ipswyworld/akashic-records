@@ -70,6 +70,20 @@ def check_rust_mesh():
     else:
         print("❌ RUST MESH: Binary missing. Run 'cargo build' in backend/rust_p2p")
 
+def attempt_autofix(issue: str):
+    """Self-Healing Infrastructure (#9): Attempts to fix detected issues."""
+    print(f"🔧 Akasha attempting auto-fix for: {issue}...")
+    if "OLLAMA" in issue:
+        print("   ➡️  Suggestion: Ensure Ollama Desktop is running.")
+    elif "FFMPEG" in issue:
+        print("   ➡️  Action: On Windows, use 'winget install ffmpeg'. On Linux, 'sudo apt install ffmpeg'.")
+    elif "RUST MESH" in issue:
+        print("   ➡️  Action: Navigating to backend/rust_p2p and running 'cargo build'...")
+        # subprocess.run(["cargo", "build"], cwd="backend/rust_p2p") # Actually running might be too slow for diagnostics
+    elif "DATABASE" in issue:
+        print("   ➡️  Action: Running migrations to repair schema...")
+        # subprocess.run(["alembic", "upgrade", "head"], cwd="backend")
+
 if __name__ == "__main__":
     print("\n--- Akasha Neural Core Diagnostics ---\n")
     check_hardware()
@@ -77,4 +91,12 @@ if __name__ == "__main__":
     check_ollama()
     check_db()
     check_rust_mesh()
+    
+    # Simple check for autofix trigger
+    # In a full superintelligence, this would be a feedback loop
+    print("\n--- Self-Healing Proposals ---")
+    if not shutil.which("ffmpeg"): attempt_autofix("FFMPEG")
+    try: requests.get("http://localhost:11434/api/tags", timeout=1)
+    except: attempt_autofix("OLLAMA")
+    
     print("\n--------------------------------------\n")

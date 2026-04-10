@@ -100,7 +100,7 @@ const DigitalLibrary = ({ theme }) => {
               <div className="flex justify-between items-center mb-8 px-2">
                 <h3 className="text-xs font-bold text-stone-400 uppercase tracking-[0.25em] flex items-center gap-3">
                   <Sparkles className="w-4 h-4 text-amber-500" /> 
-                  <span className="text-stone-200">{cat.replace('_', ' ')}</span>
+                  <span className="text-stone-200">{cat ? cat.replace('_', ' ') : 'General'}</span>
                   <span className="px-2.5 py-0.5 bg-amber-500/10 text-amber-500 rounded-full border border-amber-500/20">{catBooks.length}</span>
                 </h3>
                 <div className="flex gap-3 opacity-0 group-hover:opacity-100 transition-all">
@@ -175,7 +175,7 @@ const DigitalLibrary = ({ theme }) => {
                   <h2 className="text-3xl md:text-4xl font-serif font-bold text-white mb-4 leading-tight">{selectedBook.title}</h2>
                   <div className="flex gap-3">
                     <span className="px-3 py-1 bg-amber-500/10 text-amber-500 text-[10px] font-mono font-bold uppercase tracking-widest rounded-full border border-amber-500/20">
-                      {selectedBook.artifact_type.replace('_', ' ')}
+                      {selectedBook.artifact_type ? selectedBook.artifact_type.replace('_', ' ') : 'General'}
                     </span>
                     <span className="px-3 py-1 bg-stone-800 text-stone-400 text-[10px] font-mono rounded-full uppercase tracking-widest">
                       Volume #{selectedBook.id.substring(0, 6)}

@@ -52,6 +52,12 @@ createHUD();
 // 2. Proactive Critique Polling
 let lastUrl = "";
 async function pollProactiveCritique() {
+    const settings = await chrome.storage.local.get(['isFocusMode']);
+    if (settings.isFocusMode) {
+        if (hudElement) hudElement.style.display = "none";
+        return;
+    }
+
     const currentUrl = window.location.href;
     if (currentUrl === lastUrl) return;
     lastUrl = currentUrl;

@@ -205,6 +205,25 @@ class IngestEngine:
     def scrape_web_memory(self, url: str) -> Dict[str, Any]:
         """Scrapes a URL and extracts clean text/metadata for the Knowledge Graph."""
         try:
+            # 1. Advanced Web-to-LLM Extraction (Python 3.8 Compatible: Trafilatura)
+            try:
+                import trafilatura
+                downloaded = trafilatura.fetch_url(url)
+                if downloaded:
+                    # Extract with Markdown-like formatting and metadata
+                    result = trafilatura.extract(downloaded, include_comments=False, include_tables=True, no_fallback=False)
+                    if result:
+                        print(f"IngestEngine: Trafilatura Smart Extraction used for {url}")
+                        return {
+                            "title": url, # Trafilatura can also get metadata but url is safe
+                            "content": result,
+                            "url": url,
+                            "extractor": "trafilatura"
+                        }
+            except Exception as e:
+                print(f"IngestEngine: Trafilatura failed: {e}")
+
+            # 2. Fallback: Standard BeautifulSoup scraping
             headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
             response = requests.get(url, headers=headers, timeout=15)
             response.raise_for_status()
@@ -408,15 +427,32 @@ class IngestEngine:
                     })
             elif ext == '.pdf':
                 text = ""
-                with open(file_path, 'rb') as f:
-                    reader = PyPDF2.PdfReader(f)
-                    for page in reader.pages:
-                        text += page.extract_text() + "\n"
+                # RAGFlow-style: Deep PDF Layout & Table Extraction
+                try:
+                    import pymupdf4llm
+                    text = pymupdf4llm.to_markdown(file_path)
+                    print(f"IngestEngine: Deep Document Extraction used for {file_name}")
+                except ImportError:
+                    try:
+                        import pdfplumber
+                        with pdfplumber.open(file_path) as pdf:
+                            for page in pdf.pages:
+                                text += page.extract_text() + "\n"
+                        print(f"IngestEngine: PDFPlumber layout extraction used for {file_name}")
+                    except ImportError:
+                        with open(file_path, 'rb') as f:
+                            reader = PyPDF2.PdfReader(f)
+                            for page in reader.pages:
+                                page_text = page.extract_text()
+                                if page_text:
+                                    text += page_text + "\n"
+                        print(f"IngestEngine: Standard PyPDF2 fallback used for {file_name}")
+                
                 artifacts.append({
                     "title": f"Dataset (PDF): {file_name}",
                     "content": text,
                     "artifact_type": "dataset",
-                    "metadata": {"filename": file_name, "pages": len(reader.pages)}
+                    "metadata": {"filename": file_name, "deep_extraction": True}
                 })
             elif ext in ['.xlsx', '.xls']:
                 df = pd.read_excel(file_path)

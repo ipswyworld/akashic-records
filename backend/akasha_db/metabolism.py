@@ -4,6 +4,8 @@ import json
 import uuid
 import time
 import random
+import hashlib
+import os
 from typing import List
 from akasha_db.core import AkashaLivingDB, AkashaRecord
 from ai_engine import AIEngine
@@ -74,7 +76,10 @@ class AkashaMetabolism:
                 # Cycle 15: Meta-Optimization (Phase 6)
                 await self.meta_optimization_cycle()
 
-                # Cycle 16: Personal Life Reflection (Life Ingestion Sync)
+                # Cycle 16: Catabolism (Storage Optimization)
+                await self.catabolism_cycle()
+
+                # Cycle 17: Personal Life Reflection (Life Ingestion Sync)
                 await self.personal_life_reflection_cycle()
 
                 # Cycle 17: Global Brain - Collective Dreaming (Phase 1)
@@ -82,6 +87,9 @@ class AkashaMetabolism:
 
                 # Cycle 18: Recursive Self-Improvement (Phase 4)
                 await self.recursive_self_improvement_cycle()
+
+                # Cycle 19: Neural Core Adaptation (Synaptic Adaptation)
+                await self.neural_adaptation_cycle()
 
                 # Wait for next cycle
                 await asyncio.sleep(600) # Every 10 minutes
@@ -106,6 +114,18 @@ class AkashaMetabolism:
         r = random.choice(records)
         agent_key = r.metadata.get("routing_category", "General")
         self.ai.council.architect.evolve_prompt(r.data[:500], agent_key)
+
+    async def neural_adaptation_cycle(self):
+        """Synaptic Adaptation: Autonomous self-adaptation of the neural core."""
+        logger.info(f"Metabolism [{self.user_id}]: Initiating Neural Core Adaptation (Synaptic Adaptation)...")
+        from database import SessionLocal
+        db = SessionLocal()
+        try:
+            await self.ai.run_neural_adaptation(self.user_id, db)
+        except Exception as e:
+            logger.error(f"Neural Adaptation Error: {e}")
+        finally:
+            db.close()
 
     async def personal_life_reflection_cycle(self):
         """Syncs calendar and life events, then provides proactive insights."""
@@ -571,6 +591,66 @@ class AkashaMetabolism:
         if hasattr(self.ai, 'graph_engine') and self.ai.graph_engine:
             self.ai.graph_engine.decay_synaptic_weights(decay_factor=0.95, user_id=self.user_id)
             self.ai.graph_engine.prune_dead_synapses(threshold=0.1, user_id=self.user_id)
+
+    async def catabolism_cycle(self):
+        """
+        Phase 6 Catabolism: The destructive side of metabolism.
+        Prunes low-utility data and compacts storage.
+        """
+        logger.info(f"Metabolism [{self.user_id}]: Initiating Catabolism Cycle...")
+        
+        # 1. Compact the AOL log
+        self.db.compact()
+        
+        # 2. Prune low-utility synthetic data
+        records = self.db.get_all_records()
+        pruned_count = 0
+        current_time = time.time()
+        # TTL for synthetic data (30 days)
+        ttl = 30 * 24 * 3600 
+        
+        # We need a way to delete from AkashaLivingDB. 
+        # Since it's append-only, 'deletion' is handled by the next compaction if we don't include it.
+        # However, for immediate effect, we'd need a delete method or wait for next compact.
+        # Let's implement a simple record filtering in compact() or a dedicated prune.
+        
+        synthetic_types = ["DREAM", "ANALOGY", "FORAGE", "RESEARCH", "INTUITION", "ANALYTICS"]
+        
+        remaining_records = []
+        for r in records:
+            is_synthetic = r.type in synthetic_types or r.metadata.get("type") in synthetic_types
+            is_old = (current_time - r.timestamp) > ttl
+            is_low_utility = r.utility_score < 0.6
+            is_duplicate = r.metadata.get("is_duplicate", False)
+            
+            if (is_synthetic and is_old and is_low_utility) or is_duplicate:
+                pruned_count += 1
+                continue
+            remaining_records.append(r)
+            
+        if pruned_count > 0:
+            logger.info(f"Metabolism [{self.user_id}]: Catabolism pruned {pruned_count} low-utility records.")
+            # We rewrite the log with remaining records
+            # This is essentially what compact() does but with filtering.
+            # Let's modify AkashaLivingDB to accept a filter or just rewrite here.
+            
+            temp_log = self.db.log_file + ".tmp"
+            new_index = {}
+            new_tail_hash = None
+            
+            with open(temp_log, "w") as f:
+                for r in remaining_records:
+                    r.prev_hash = new_tail_hash
+                    offset = f.tell()
+                    f.write(r.json() + "\n")
+                    new_index[r.id] = offset
+                    payload = f"{r.id}:{r.prev_hash}:{r.timestamp}"
+                    new_tail_hash = hashlib.sha256(payload.encode()).hexdigest()
+            
+            os.replace(temp_log, self.db.log_file)
+            self.db.index = new_index
+            self.db._save_index()
+            self.db.last_record_hash = new_tail_hash
 
     async def heartbeat(self):
         """24/7 check for data integrity and blockchain anchoring."""

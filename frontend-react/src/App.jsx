@@ -5,7 +5,7 @@ import {
   MessageSquare, Building2, Sun, Moon, PanelLeftClose, 
   PanelLeftOpen, Settings, Zap, Sparkles, BrainCircuit,
   Command, Search, Plus, Activity, Unlock, X, Check, AlertCircle, Paperclip, Send,
-  Book, Landmark, Clock, GraduationCap
+  Book, Landmark, Clock, GraduationCap, CheckCircle
 } from 'lucide-react';
 
 const NeuralClock = () => {
@@ -45,7 +45,8 @@ import NetworkView from './views/NetworkView';
 import ForgeView from './views/ForgeView';
 import AuthView from './views/AuthView';
 import DigitalLibrary from './views/DigitalLibrary';
-import TutorView from './views/TutorView';
+import TodoView from './views/TodoView';
+import TrainingView from './views/TrainingView';
 import ArcReactor from './components/ArcReactor';
 import Orb from './components/Orb';
 import { useVoice } from './hooks/useVoice';
@@ -244,13 +245,14 @@ function AkashaOSContent() {
           <NavItem icon={Zap} label="Butler" id="butler" />
           <NavItem icon={Library} label="Deep Library" id="library" />
           <NavItem icon={Book} label="Neural Library" id="digital_library" />
-          <NavItem icon={GraduationCap} label="Synaptic Tutor" id="tutor" />
           <NavItem icon={Network} label="Neural Graph" id="graph" />
           <NavItem icon={Globe} label="Sovereign Network" id="network" />
           <NavItem icon={Hammer} label="Neural Forge" id="forge" />
           <NavItem icon={MessageSquare} label="Archivist Chat" id="chat" />
           <NavItem icon={Building2} label="Memory Palace" id="palace" />
           <NavItem icon={Sparkles} label="Data Harvest" id="harvest" />
+          <NavItem icon={CheckCircle} label="Daily Intentions" id="todos" />
+          <NavItem icon={Activity} label="Neural Training" id="training" />
           <NavItem icon={BrainCircuit} label="Digital Ego" id="ego" />
         </div>
         <div className="p-4 border-t border-inherit space-y-2 shrink-0">
@@ -277,7 +279,7 @@ function AkashaOSContent() {
           <div className="absolute top-24 left-1/2 -translate-x-1/2 z-[70] animate-in fade-in zoom-in duration-500">
             <div className={`px-6 py-2 rounded-full border border-blue-500/20 bg-slate-900/80 backdrop-blur-xl text-[10px] font-black uppercase tracking-[0.3em] text-blue-500 shadow-2xl flex items-center gap-3`}>
               <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></div>
-              Intent Detected: {activeIntent.replace('_', ' ')}
+              Intent Detected: {activeIntent ? activeIntent.replace('_', ' ') : 'None'}
             </div>
           </div>
         )}
@@ -315,13 +317,14 @@ function AkashaOSContent() {
               {currentView === 'butler' && <ButlerView theme={theme} />}
               {currentView === 'library' && <LibraryView artifacts={artifacts || []} analytics={analytics} theme={theme} />}
               {currentView === 'digital_library' && <DigitalLibrary theme={theme} />}
-              {currentView === 'tutor' && <TutorView theme={theme} />}
               {currentView === 'graph' && <GraphView theme={theme} />}
               {currentView === 'network' && <NetworkView theme={theme} />}
               {currentView === 'forge' && <ForgeView theme={theme} />}
               {currentView === 'chat' && <ChatView messages={messages} setMessages={setMessages} isSynthesizing={isSynthesizing} setIsSynthesizing={setIsSynthesizing} theme={theme} analytics={analytics} />}
               {currentView === 'palace' && <PalaceView analytics={analytics} theme={theme} />}
               {currentView === 'harvest' && <DataHarvestView theme={theme} onIngest={refreshData} />}
+              {currentView === 'todos' && <TodoView theme={theme} />}
+              {currentView === 'training' && <TrainingView theme={theme} />}
               {currentView === 'ego' && <EgoView theme={theme} />}
               {currentView === 'settings' && <SettingsView userSettings={userSettings} analytics={analytics} onUpdate={(s) => updateSettingsMutation.mutate({ settings: s, userId: 'system_user' })} theme={theme} />}
             </motion.div>

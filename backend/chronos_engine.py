@@ -464,3 +464,34 @@ class ChronosEngine:
             logger.error(f"Chronos: Failed to generate daily reflection: {e}")
             db_session.rollback()
             return None
+
+    async def storage_maintenance(self, user_id: str):
+        """
+        Catabolism Phase 2: Prunes old SQLite data (Activities and Knowledge Events).
+        """
+        db: Session = SessionLocal()
+        try:
+            logger.info(f"Chronos: Initiating storage maintenance for {user_id}...")
+            from models import UserActivity, KnowledgeEvent
+            
+            # 1. Prune User Activities older than 30 days
+            thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+            deleted_activities = db.query(UserActivity).filter(
+                UserActivity.user_id == user_id,
+                UserActivity.timestamp < thirty_days_ago
+            ).delete()
+            
+            # 2. Prune Knowledge Events older than 30 days
+            deleted_events = db.query(KnowledgeEvent).filter(
+                KnowledgeEvent.user_id == user_id,
+                KnowledgeEvent.timestamp < thirty_days_ago
+            ).delete()
+            
+            db.commit()
+            logger.info(f"Chronos: Pruned {deleted_activities} activities and {deleted_events} knowledge events.")
+            
+        except Exception as e:
+            logger.error(f"Chronos: Storage maintenance failed: {e}")
+            db.rollback()
+        finally:
+            db.close()

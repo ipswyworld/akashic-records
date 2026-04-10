@@ -12,6 +12,8 @@ services:
       - NEO4J_PASSWORD=akasha_password
       - DATABASE_URL=postgresql://akasha_user:akasha_password@db/akasha_db
       - REDIS_URL=redis://redis:6379
+      - OLLAMA_URL=http://host.docker.internal:11434
+      - AKASHA_INSTALL_DEPS=false
     depends_on:
       - db
       - chroma
@@ -85,6 +87,8 @@ services:
       - NEO4J_PASSWORD=akasha_password
       - DATABASE_URL=postgresql://akasha_user:akasha_password@db/akasha_db
       - REDIS_URL=redis://redis:6379
+      - OLLAMA_URL=http://host.docker.internal:11434
+      - AKASHA_INSTALL_DEPS=false
     depends_on:
       - redis
       - db

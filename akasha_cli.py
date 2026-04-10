@@ -60,7 +60,6 @@ class AkashaCLI:
         print(f"  /gc        - Run Knowledge Garbage Collection (Archive noise)")
         print(f"  /skills    - List forged skills in the Neural Library")
         print(f"  /forge     - Forge a new skill from data")
-        print(f"  /tutor     - Enter Accelerated Learning Mode (Quizzes & Syllabus)")
         print(f"  /backup    - Generate a 'Neural Will' (Encrypted ZIP & Shards)")
         print(f"  /soul      - Inspect your Digital Ego's OCEAN traits and mood")
         print(f"  /image     - Analyze an image description via Visual Swarm")
@@ -69,8 +68,17 @@ class AkashaCLI:
         print(f"  /help      - Show this menu")
         print(f"  exit       - Close the terminal\n")
 
+    def get_headers(self):
+        token_file = os.path.expanduser("~/.akasha_token")
+        if os.path.exists(token_file):
+            with open(token_file, 'r') as f:
+                token = f.read().strip()
+                return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        return {"Content-Type": "application/json"}
+
     async def chat_loop(self):
         print_banner(self.engine)
+        api_base = "http://localhost:8001"
         
         while True:
             try:
@@ -81,10 +89,63 @@ class AkashaCLI:
                 
                 # --- Command Handling ---
                 if user_input.startswith("/"):
-                    cmd = user_input.split()[0].lower()
+                    parts = user_input.split()
+                    cmd = parts[0].lower()
                     
                     if cmd == "/help":
                         self.display_help()
+                    elif cmd == "/todo":
+                        if len(parts) < 2:
+                            print(f"{Colors.FAIL}Usage: /todo [list|add|done|rm] [args]{Colors.ENDC}\n")
+                            continue
+                        subcmd = parts[1].lower()
+                        if subcmd == "list":
+                            r = requests.get(f"{api_base}/todos", headers=self.get_headers())
+                            todos = r.json()
+                            print(f"\n{Colors.BOLD}--- Daily Intentions ---{Colors.ENDC}")
+                            for t in todos:
+                                status = "✅" if t['completed'] else "⭕"
+                                print(f"  {status} [{t['id'][:4]}] {t['text']} ({t['category']})")
+                            print()
+                        elif subcmd == "add":
+                            text = " ".join(parts[2:])
+                            if not text:
+                                print(f"{Colors.FAIL}Error: Provide todo text.{Colors.ENDC}\n")
+                                continue
+                            r = requests.post(f"{api_base}/todos", json={"text": text}, headers=self.get_headers())
+                            res = r.json()
+                            print(f"{Colors.OKGREEN}System > Intention Captured: {res['todo']['text']}{Colors.ENDC}")
+                            if res.get('ego_feedback'):
+                                print(f"{Colors.THOUGHT}Archivist > {res['ego_feedback']}{Colors.ENDC}")
+                            print()
+                        elif subcmd == "done":
+                            if len(parts) < 3:
+                                print(f"{Colors.FAIL}Error: Provide todo ID (first 4 chars).{Colors.ENDC}\n")
+                                continue
+                            tid = parts[2]
+                            # Find full ID
+                            r_list = requests.get(f"{api_base}/todos", headers=self.get_headers())
+                            todos = r_list.json()
+                            target = next((t for t in todos if t['id'].startswith(tid)), None)
+                            if target:
+                                r = requests.patch(f"{api_base}/todos/{target['id']}", json={"completed": not target['completed']}, headers=self.get_headers())
+                                state = "completed" if r.json()['completed'] else "active"
+                                print(f"{Colors.OKBLUE}System > Todo {tid} is now {state}.{Colors.ENDC}\n")
+                            else:
+                                print(f"{Colors.FAIL}Error: Todo {tid} not found.{Colors.ENDC}\n")
+                        elif subcmd == "rm":
+                            if len(parts) < 3:
+                                print(f"{Colors.FAIL}Error: Provide todo ID.{Colors.ENDC}\n")
+                                continue
+                            tid = parts[2]
+                            r_list = requests.get(f"{api_base}/todos", headers=self.get_headers())
+                            target = next((t for t in r_list.json() if t['id'].startswith(tid)), None)
+                            if target:
+                                requests.delete(f"{api_base}/todos/{target['id']}", headers=self.get_headers())
+                                print(f"{Colors.WARNING}System > Todo {tid} purged.{Colors.ENDC}\n")
+                            else:
+                                print(f"{Colors.FAIL}Error: Todo {tid} not found.{Colors.ENDC}\n")
+                        continue
                     elif cmd == "/wisdom":
                         self.wisdom_mode = not self.wisdom_mode
                         state = "ACTIVE" if self.wisdom_mode else "INACTIVE"
@@ -147,10 +208,6 @@ class AkashaCLI:
                     elif cmd == "/skills":
                         skills = self.engine.skill_loader.list_available_skills()
                         print(f"{Colors.OKCYAN}Forged Skills:{Colors.ENDC} {', '.join(skills)}\n")
-                    elif cmd == "/tutor":
-                        print(f"{Colors.OKBLUE}Scholar > Initiating Synaptic Tutor...{Colors.ENDC}")
-                        # Mock: Trigger syllabus generation
-                        print("Syllabus: Deep Research Mastery (Step 1 of 5). Use '/tutor quiz' for an exam.\n")
                     elif cmd == "/backup":
                         print(f"{Colors.WARNING}Neural Will > Creating encrypted sovereign backup...{Colors.ENDC}")
                         # In a real environment, call backup_engine
